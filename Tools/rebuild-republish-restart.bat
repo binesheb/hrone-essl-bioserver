@@ -7,13 +7,17 @@ REM
 REM There is NO mandatory installation/deployment path.
 REM The instance is determined from THIS BAT's location.
 REM
-REM Expected instance structure:
+REM Expected structure:
 REM   <INSTANCE>\HROneSync\HROneSyncService\HROneSyncService.csproj
 REM   <INSTANCE>\HROneSync\Publish\HROneSyncService.exe
 REM   <INSTANCE>\Tools\this-bat.bat
 REM
-REM The script never assumes C:\HROneSync or any other fixed path.
-REM It only works on the instance containing this Tools folder.
+REM The Windows service is GLOBAL to the PC. Therefore the instance
+REM deployed by the LAST successfully executed tool becomes the active
+REM service instance. This script deliberately switches the service's
+REM ImagePath to THIS INSTANCE only.
+REM
+REM No fixed path is assumed. GitHub and production remain separate.
 REM ================================================================
 
 set "SERVICE=HROneSyncService"
@@ -52,6 +56,14 @@ if not exist "%PUBLISH_DIR%\" (
     exit /b 4
 )
 
+if not exist "%PUBLISH_EXE%" (
+    echo [ERROR] Existing service executable was not found:
+    echo         %PUBLISH_EXE%
+    echo.
+    echo The script will not create a new deployment location.
+    exit /b 5
+)
+
 cd /d "%INSTANCE_ROOT%"
 
 set "SERVICE_EXISTS=0"
@@ -75,10 +87,6 @@ REM ---------------------------------------------------------------
 if "%SERVICE_EXISTS%"=="1" (
     echo [1/9] Stopping %SERVICE%...
     sc.exe stop "%SERVICE%" >nul 2>&1
-    if errorlevel 1 (
-        REM It may already be stopped. We verify below.
-        echo       Stop command returned non-zero; verifying current state...
-    )
 
     set "STATE="
     for /l %%N in (1,1,30) do (
@@ -90,7 +98,7 @@ if "%SERVICE_EXISTS%"=="1" (
 
     echo [ERROR] %SERVICE% did not reach STOPPED state.
     echo         Deployment aborted. Published files were NOT changed.
-    exit /b 5
+    exit /b 6
 ) else (
     echo [1/9] %SERVICE% is not installed. Build/publish will continue.
 )
@@ -106,7 +114,7 @@ echo [2/9] Restoring dependencies...
 dotnet restore "%PROJECT%"
 if errorlevel 1 (
     echo [ERROR] Restore failed. Service remains stopped.
-    exit /b 6
+    exit /b 7
 )
 
 REM ---------------------------------------------------------------
@@ -117,7 +125,7 @@ echo [3/9] Cleaning Release build...
 dotnet clean "%PROJECT%" -c Release --no-restore
 if errorlevel 1 (
     echo [ERROR] Clean failed. Service remains stopped.
-    exit /b 7
+    exit /b 8
 )
 
 REM ---------------------------------------------------------------
@@ -128,11 +136,11 @@ echo [4/9] Building Release...
 dotnet build "%PROJECT%" -c Release --no-restore
 if errorlevel 1 (
     echo [ERROR] Build failed. Service remains stopped.
-    exit /b 8
+    exit /b 9
 )
 
 REM ---------------------------------------------------------------
-REM 5. PUBLISH TO EXISTING HROneSync\Publish
+REM 5. PUBLISH TO THIS INSTANCE'S EXISTING HROneSync\Publish
 REM ---------------------------------------------------------------
 echo.
 echo [5/9] Publishing to the EXISTING Publish folder...
@@ -140,54 +148,66 @@ echo       %PUBLISH_DIR%
 dotnet publish "%PROJECT%" -c Release --no-restore -o "%PUBLISH_DIR%"
 if errorlevel 1 (
     echo [ERROR] Publish failed. Service remains stopped.
-    exit /b 9
+    exit /b 10
 )
 
 if not exist "%PUBLISH_EXE%" (
     echo [ERROR] Published executable was not found:
     echo         %PUBLISH_EXE%
     echo         Service remains stopped.
-    exit /b 10
+    exit /b 11
 )
 
 REM ---------------------------------------------------------------
 REM 6. CONFIGURE WINDOWS SERVICE TO THIS INSTANCE
 REM ---------------------------------------------------------------
 echo.
-echo [6/9] Configuring Windows service for THIS INSTANCE...
+echo [6/9] Switching Windows service to THIS INSTANCE...
+
 if "%SERVICE_EXISTS%"=="0" (
-    sc.exe create "%SERVICE%" binPath= "\"%PUBLISH_EXE%\"" start= auto DisplayName= "HROne ESSL Biometric Sync Service"
+    sc.exe create "%SERVICE%" binPath= "%PUBLISH_EXE%" start= auto DisplayName= "HROne ESSL Biometric Sync Service"
     if errorlevel 1 (
         echo [ERROR] Could not create Windows service.
-        exit /b 11
+        exit /b 12
     )
     sc.exe description "%SERVICE%" "ESSL/eBioServer to HROne biometric attendance synchronization service."
 ) else (
-    sc.exe config "%SERVICE%" binPath= "\"%PUBLISH_EXE%\"" start= auto
+    REM IMPORTANT: do NOT use \"...\" escaping here. CMD passes the
+    REM quoted value directly to sc.exe. The previous form could leave
+    REM the SCM ImagePath unchanged.
+    sc.exe config "%SERVICE%" binPath= "%PUBLISH_EXE%" start= auto
     if errorlevel 1 (
         echo [ERROR] Could not update Windows service binPath.
-        exit /b 11
+        exit /b 12
     )
 )
 
-REM Restart automatically only after unexpected service failures.
+if errorlevel 1 (
+    echo [ERROR] Windows service configuration failed.
+    exit /b 12
+)
+
 sc.exe failure "%SERVICE%" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul 2>&1
 
 REM ---------------------------------------------------------------
-REM 7. VERIFY SERVICE PATH
+REM 7. VERIFY THE ACTUAL SCM ImagePath USING CIM
 REM ---------------------------------------------------------------
 echo.
 echo [7/9] Verifying Windows service path...
-set "BINPATH="
-for /f "tokens=2,*" %%A in ('sc.exe qc "%SERVICE%" ^| findstr /I "BINARY_PATH_NAME"') do set "BINPATH=%%B"
-echo       SCM: !BINPATH!
-echo !BINPATH! | findstr /I /C:"%PUBLISH_EXE%" >nul
+set "ACTUAL_PATH="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=Get-CimInstance Win32_Service -Filter \"Name='HROneSyncService'\" -ErrorAction Stop; if($s){$s.PathName}"`) do set "ACTUAL_PATH=%%P"
+
+echo       Expected: %PUBLISH_EXE%
+echo       SCM Path : !ACTUAL_PATH!
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$expected=[IO.Path]::GetFullPath('%PUBLISH_EXE%'); $s=Get-CimInstance Win32_Service -Filter \"Name='HROneSyncService'\" -ErrorAction Stop; if(-not $s){exit 1}; $actual=$s.PathName.Trim(); $actual=$actual.Trim('^\"'); if($actual -ieq $expected){exit 0}; Write-Host ('[ERROR] SCM ImagePath mismatch. Actual: ' + $s.PathName); exit 2"
 if errorlevel 1 (
     echo [ERROR] Windows service is NOT pointing to this instance.
-    echo         Expected: %PUBLISH_EXE%
     echo         Service will NOT be started.
-    exit /b 12
+    exit /b 13
 )
+
+echo       Service path verified.
 
 REM ---------------------------------------------------------------
 REM 8. START AND WAIT FOR RUNNING
@@ -197,7 +217,7 @@ echo [8/9] Starting %SERVICE%...
 sc.exe start "%SERVICE%" >nul
 if errorlevel 1 (
     echo [ERROR] Failed to start %SERVICE%.
-    exit /b 13
+    exit /b 14
 )
 
 set "STATE="
@@ -209,7 +229,7 @@ for /l %%N in (1,1,30) do (
 )
 
 echo [ERROR] Service did not reach RUNNING state within 30 seconds.
-exit /b 14
+exit /b 15
 
 :SERVICE_RUNNING
 echo       Service is RUNNING.
@@ -230,12 +250,12 @@ if errorlevel 1 (
 echo.
 echo ================================================================
 echo DEPLOYMENT COMPLETE
-echo ================================================================
-echo Instance : %INSTANCE_ROOT%
-echo Source   : %PROJECT%
-echo Publish  : %PUBLISH_DIR%
-echo Service  : %SERVICE%
-echo Dashboard: http://localhost:8009
+ echo ================================================================
+echo Active instance: %INSTANCE_ROOT%
+echo Source        : %PROJECT%
+echo Publish       : %PUBLISH_DIR%
+echo Service       : %SERVICE%
+echo Dashboard     : http://localhost:8009
 echo ================================================================
 echo.
 exit /b 0
