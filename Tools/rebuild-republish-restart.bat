@@ -12,36 +12,14 @@ REM   <INSTANCE>\HROneSync\HROneSyncService\HROneSyncService.csproj
 REM   <INSTANCE>\HROneSync\Publish\HROneSyncService.exe
 REM   <INSTANCE>\Tools\this-bat.bat
 REM
-REM Examples:
-REM   C:\hrone-essl-bioserver\Tools\this-bat.bat
-REM     -> source:  C:\hrone-essl-bioserver\HROneSync\HROneSyncService
-REM     -> publish: C:\hrone-essl-bioserver\HROneSync\Publish
-REM
-REM   C:\HROneSync\Tools\this-bat.bat
-REM     -> source:  C:\HROneSync\HROneSyncService\HROneSyncService.csproj
-REM     -> publish: C:\HROneSync\Publish
-REM
-REM The script NEVER assumes C:\HROneSync, C:\hrone-essl-bioserver,
-REM or any other fixed location. It never modifies another instance.
-REM
-REM Every deployment:
-REM   1. Resolves the instance from this BAT's own Tools folder.
-REM   2. Finds the source project using the instance's actual structure.
-REM   3. Uses the EXISTING HROneSync\Publish folder for that instance.
-REM   4. Stops HROneSyncService and waits for STOPPED.
-REM   5. Restores, cleans, builds and publishes that instance only.
-REM   6. Configures Windows Service binPath to that instance's EXE.
-REM   7. Starts the service and verifies RUNNING.
-REM   8. Checks dashboard port 8009.
-REM
-REM Run as Administrator.
+REM The script never assumes C:\HROneSync or any other fixed path.
+REM It only works on the instance containing this Tools folder.
 REM ================================================================
 
 set "SERVICE=HROneSyncService"
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "INSTANCE_ROOT=%%~fI"
 
-REM The repository/deployment structure is authoritative.
 set "SOURCE_ROOT=%INSTANCE_ROOT%\HROneSync"
 set "PROJECT=%SOURCE_ROOT%\HROneSyncService\HROneSyncService.csproj"
 set "PUBLISH_DIR=%SOURCE_ROOT%\Publish"
@@ -61,21 +39,16 @@ if errorlevel 1 (
 )
 
 if not exist "%PROJECT%" (
-    echo [ERROR] Could not find HROneSyncService.csproj for this instance.
-    echo         Expected:
+    echo [ERROR] Could not find the service project for this instance:
     echo         %PROJECT%
-    echo.
-    echo Put this BAT in the Tools folder belonging to the instance you want to deploy.
     exit /b 3
 )
 
-REM Publish MUST already exist. Do not invent a different publish location.
 if not exist "%PUBLISH_DIR%\" (
-    echo [ERROR] Existing Publish folder was not found.
-    echo         Expected:
+    echo [ERROR] Existing Publish folder was not found:
     echo         %PUBLISH_DIR%
     echo.
-    echo This script does not create or relocate the deployment structure.
+    echo The script will NOT create a different deployment structure.
     exit /b 4
 )
 
@@ -96,16 +69,25 @@ echo Service  : %SERVICE%
 echo ================================================================
 echo.
 
+REM ---------------------------------------------------------------
+REM 1. STOP SERVICE AND WAIT FOR REAL STOPPED STATE
+REM ---------------------------------------------------------------
 if "%SERVICE_EXISTS%"=="1" (
     echo [1/9] Stopping %SERVICE%...
     sc.exe stop "%SERVICE%" >nul 2>&1
+    if errorlevel 1 (
+        REM It may already be stopped. We verify below.
+        echo       Stop command returned non-zero; verifying current state...
+    )
+
     set "STATE="
     for /l %%N in (1,1,30) do (
         set "STATE="
-        for /f "tokens=3" %%S in ('sc.exe query "%SERVICE%" ^| findstr /I "STATE"') do set "STATE=%%S"
+        for /f "tokens=4" %%S in ('sc.exe query "%SERVICE%" ^| findstr /R /C:"STATE"') do set "STATE=%%S"
         if /I "!STATE!"=="STOPPED" goto SERVICE_STOPPED
         timeout /t 1 /nobreak >nul
     )
+
     echo [ERROR] %SERVICE% did not reach STOPPED state.
     echo         Deployment aborted. Published files were NOT changed.
     exit /b 5
@@ -114,8 +96,11 @@ if "%SERVICE_EXISTS%"=="1" (
 )
 
 :SERVICE_STOPPED
-echo       Service stopped.
+echo       Service is STOPPED.
 
+REM ---------------------------------------------------------------
+REM 2. RESTORE
+REM ---------------------------------------------------------------
 echo.
 echo [2/9] Restoring dependencies...
 dotnet restore "%PROJECT%"
@@ -124,6 +109,9 @@ if errorlevel 1 (
     exit /b 6
 )
 
+REM ---------------------------------------------------------------
+REM 3. CLEAN
+REM ---------------------------------------------------------------
 echo.
 echo [3/9] Cleaning Release build...
 dotnet clean "%PROJECT%" -c Release --no-restore
@@ -132,6 +120,9 @@ if errorlevel 1 (
     exit /b 7
 )
 
+REM ---------------------------------------------------------------
+REM 4. BUILD
+REM ---------------------------------------------------------------
 echo.
 echo [4/9] Building Release...
 dotnet build "%PROJECT%" -c Release --no-restore
@@ -140,6 +131,9 @@ if errorlevel 1 (
     exit /b 8
 )
 
+REM ---------------------------------------------------------------
+REM 5. PUBLISH TO EXISTING HROneSync\Publish
+REM ---------------------------------------------------------------
 echo.
 echo [5/9] Publishing to the EXISTING Publish folder...
 echo       %PUBLISH_DIR%
@@ -156,6 +150,9 @@ if not exist "%PUBLISH_EXE%" (
     exit /b 10
 )
 
+REM ---------------------------------------------------------------
+REM 6. CONFIGURE WINDOWS SERVICE TO THIS INSTANCE
+REM ---------------------------------------------------------------
 echo.
 echo [6/9] Configuring Windows service for THIS INSTANCE...
 if "%SERVICE_EXISTS%"=="0" (
@@ -176,6 +173,9 @@ if "%SERVICE_EXISTS%"=="0" (
 REM Restart automatically only after unexpected service failures.
 sc.exe failure "%SERVICE%" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul 2>&1
 
+REM ---------------------------------------------------------------
+REM 7. VERIFY SERVICE PATH
+REM ---------------------------------------------------------------
 echo.
 echo [7/9] Verifying Windows service path...
 set "BINPATH="
@@ -189,6 +189,9 @@ if errorlevel 1 (
     exit /b 12
 )
 
+REM ---------------------------------------------------------------
+REM 8. START AND WAIT FOR RUNNING
+REM ---------------------------------------------------------------
 echo.
 echo [8/9] Starting %SERVICE%...
 sc.exe start "%SERVICE%" >nul
@@ -200,16 +203,20 @@ if errorlevel 1 (
 set "STATE="
 for /l %%N in (1,1,30) do (
     set "STATE="
-    for /f "tokens=3" %%S in ('sc.exe query "%SERVICE%" ^| findstr /I "STATE"') do set "STATE=%%S"
+    for /f "tokens=4" %%S in ('sc.exe query "%SERVICE%" ^| findstr /R /C:"STATE"') do set "STATE=%%S"
     if /I "!STATE!"=="RUNNING" goto SERVICE_RUNNING
     timeout /t 1 /nobreak >nul
 )
+
 echo [ERROR] Service did not reach RUNNING state within 30 seconds.
 exit /b 14
 
 :SERVICE_RUNNING
 echo       Service is RUNNING.
 
+REM ---------------------------------------------------------------
+REM 9. CHECK DASHBOARD
+REM ---------------------------------------------------------------
 echo.
 echo [9/9] Checking dashboard port 8009...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=Get-NetTCPConnection -LocalPort 8009 -State Listen -ErrorAction SilentlyContinue; if($c){exit 0}else{exit 1}"
