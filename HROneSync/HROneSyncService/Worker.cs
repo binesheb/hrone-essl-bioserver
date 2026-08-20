@@ -71,12 +71,17 @@ namespace HROneSyncService
                         }
                     }
                 }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Fatal error in worker loop");
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(_pollSeconds), stoppingToken);
+                try { await Task.Delay(TimeSpan.FromSeconds(_pollSeconds), stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             }
 
             _logger.LogInformation("Worker stopping");
@@ -92,12 +97,26 @@ namespace HROneSyncService
 
         private async Task UpdateLastProcessedId(long id, CancellationToken token)
         {
-            using var conn = new SqlConnection(_connectionString);
-            await conn.OpenAsync(token);
-            using var cmd = new SqlCommand("UPDATE HROneSyncState SET LastProcessedDeviceLogId = @id", conn);
-            cmd.Parameters.AddWithValue("@id", id);
-            await cmd.ExecuteNonQueryAsync(token);
-            _logger.LogInformation("Updated LastProcessedDeviceLogId to {Id}", id);
+            await DashboardServer.CheckpointGate.WaitAsync(token);
+            try
+            {
+                if (DashboardServer.ResyncPending)
+                {
+                    _logger.LogInformation("Skipping checkpoint update to {Id} because a dashboard resync is pending", id);
+                    return;
+                }
+
+                using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync(token);
+                using var cmd = new SqlCommand("UPDATE HROneSyncState SET LastProcessedDeviceLogId = @id", conn);
+                cmd.Parameters.AddWithValue("@id", id);
+                await cmd.ExecuteNonQueryAsync(token);
+                _logger.LogInformation("Updated LastProcessedDeviceLogId to {Id}", id);
+            }
+            finally
+            {
+                DashboardServer.CheckpointGate.Release();
+            }
         }
 
         private async Task<List<DeviceLogDto>> GetNewLogs(long lastId, CancellationToken token)
@@ -177,6 +196,10 @@ namespace HROneSyncService
                     return false;
                 }
                 return true;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return false;
             }
             catch (Exception ex)
             {
