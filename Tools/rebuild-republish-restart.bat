@@ -71,26 +71,17 @@ echo.
 echo [6/9] Switching Windows service to THIS INSTANCE...
 echo       Target: %PUBLISH_EXE%
 
-sc.exe query "%SERVICE%" >nul 2>&1
-if errorlevel 1 (
-    sc.exe create "%SERVICE%" binPath= """%PUBLISH_EXE%""" start= auto DisplayName= "HROneSyncService"
-    if errorlevel 1 (echo [ERROR] Could not create Windows service.& exit /b 10)
-) else (
-    sc.exe config "%SERVICE%" binPath= """%PUBLISH_EXE%""" start= auto
-    if errorlevel 1 (echo [ERROR] Could not change Windows service path.& exit /b 10)
-)
+REM Use PowerShell only to construct the exact quoted ImagePath argument,
+REM then call the native Service Control Manager (sc.exe).
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$name='%SERVICE%'; $path=(Resolve-Path -LiteralPath '%PUBLISH_EXE%').Path; $quoted='\"'+$path+'\"'; $svc=Get-Service -Name $name -ErrorAction SilentlyContinue; if($null -eq $svc){& sc.exe create $name ('binPath= '+$quoted) 'start= auto' 'DisplayName= HROneSyncService'; $code=$LASTEXITCODE}else{& sc.exe config $name ('binPath= '+$quoted) 'start= auto'; $code=$LASTEXITCODE}; if($code -ne 0){Write-Error ('SCM service configuration failed with exit code '+$code);exit $code}; exit 0"
+if errorlevel 1 (echo [ERROR] Could not switch Windows service to this instance.& exit /b 10)
 
-sc.exe description "%SERVICE%" "HROne ESSL biometric synchronization service."
+sc.exe description "%SERVICE%" "HROne ESSL biometric synchronization service." >nul 2>&1
 sc.exe failure "%SERVICE%" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul 2>&1
 
 echo.
 echo [7/9] Verifying Windows service path...
-set "ACTUAL_PATH="
-for /f "tokens=2,*" %%A in ('sc.exe qc "%SERVICE%" ^| findstr /I "BINARY_PATH_NAME"') do set "ACTUAL_PATH=%%B"
-echo       SCM Path: !ACTUAL_PATH!
-
-REM Normalize the expected/actual values for comparison. The service may show surrounding quotes.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$expected=(Resolve-Path -LiteralPath '%PUBLISH_EXE%').Path; $svc=Get-CimInstance Win32_Service -Filter \"Name='%SERVICE%'\"; if($null -eq $svc){Write-Error 'Service not found after configuration.';exit 1}; $actual=$svc.PathName; Write-Host ('       Verified Path: '+$actual); if($actual -notmatch [regex]::Escape($expected)){Write-Error ('Service is mapped to the wrong instance. Expected: '+$expected);exit 2};exit 0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$expected=(Resolve-Path -LiteralPath '%PUBLISH_EXE%').Path; $svc=Get-CimInstance Win32_Service -Filter \"Name='%SERVICE%'\"; if($null -eq $svc){Write-Error 'Service not found after configuration.';exit 1}; $actual=$svc.PathName; Write-Host ('       SCM Path: '+$actual); $normalized=($actual -replace '^\"|\"$',''); if($normalized -ne $expected){Write-Error ('Service is mapped to the wrong instance. Expected: '+$expected+' ; Actual: '+$actual);exit 2};exit 0"
 if errorlevel 1 (echo [ERROR] Windows service path verification failed. Service will NOT be started.& exit /b 11)
 echo       Service path verified for THIS INSTANCE.
 
