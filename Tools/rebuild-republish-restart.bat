@@ -4,18 +4,15 @@ setlocal EnableExtensions EnableDelayedExpansion
 REM ================================================================
 REM HROne ESSL Biometric - Build / Publish / Restart
 REM
-REM This script is location-aware. Keep it anywhere under the cloned
-REM repository, preferably in the Tools folder.
+REM IMPORTANT:
+REM   The GitHub clone is the deployment source AND deployment folder.
+REM   This script publishes into <repository>\Publish.
+REM   The installed Windows service is reconfigured to run that binary.
 REM
-REM It will:
-REM   1. Locate the repository root from this BAT file.
-REM   2. Locate HROneSyncService.csproj under the repository.
-REM   3. Read the installed Windows service binary path from SCM.
-REM   4. Stop HROneSyncService.
-REM   5. Build the .NET project.
-REM   6. Publish directly to the installed service's directory.
-REM   7. Start HROneSyncService.
-REM   8. Verify the service state and dashboard port.
+REM Expected layout:
+REM   <repo>\HROneSync\HROneSyncService\HROneSyncService.csproj
+REM   <repo>\Tools\rebuild-republish-restart.bat
+REM   <repo>\Publish\HROneSyncService.exe
 REM
 REM Run this BAT file as Administrator.
 REM ================================================================
@@ -24,6 +21,10 @@ set "SERVICE=HROneSyncService"
 set "SCRIPT_DIR=%~dp0"
 set "REPO_ROOT=%SCRIPT_DIR%.."
 for %%I in ("%REPO_ROOT%") do set "REPO_ROOT=%%~fI"
+
+REM The GitHub repository itself is the deployment target.
+set "PUBLISH_DIR=%REPO_ROOT%\Publish"
+set "PUBLISH_EXE=%PUBLISH_DIR%\HROneSyncService.exe"
 
 set "PROJECT="
 for /r "%REPO_ROOT%" %%F in (HROneSyncService.csproj) do (
@@ -36,42 +37,20 @@ if not defined PROJECT (
     exit /b 1
 )
 
-for %%I in ("%PROJECT%") do set "PROJECT_DIR=%%~dpI"
-
-set "SERVICE_BIN="
-for /f "tokens=2,*" %%A in ('sc.exe qc "%SERVICE%" ^| findstr /I "BINARY_PATH_NAME"') do (
-    set "SERVICE_BIN=%%B"
-)
-
-if not defined SERVICE_BIN (
-    echo [ERROR] Windows service "%SERVICE%" was not found.
-    exit /b 2
-)
-
-REM Remove surrounding quotes and command-line arguments if present.
-set "SERVICE_BIN=%SERVICE_BIN:"=%"
-for /f "tokens=1" %%A in ("%SERVICE_BIN%") do set "SERVICE_EXE=%%A"
-
-for %%I in ("%SERVICE_EXE%") do set "PUBLISH_DIR=%%~dpI"
-if not defined PUBLISH_DIR (
-    echo [ERROR] Could not determine the installed publish directory.
-    exit /b 3
-)
-
-set "PUBLISH_DIR=%PUBLISH_DIR:~0,-1%"
-
 where dotnet >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] dotnet was not found in PATH.
-    exit /b 4
+    exit /b 2
 )
 
 net session >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Administrator privileges are required.
     echo         Right-click this BAT file and choose Run as administrator.
-    exit /b 5
+    exit /b 3
 )
+
+if not exist "%PUBLISH_DIR%" mkdir "%PUBLISH_DIR%"
 
 cd /d "%REPO_ROOT%"
 
@@ -85,10 +64,11 @@ echo Service    : %SERVICE%
 echo ================================================================
 echo.
 
-echo [1/6] Stopping %SERVICE%...
+echo [1/7] Stopping %SERVICE%...
 sc.exe stop "%SERVICE%" >nul 2>&1
 
 REM Wait up to 30 seconds for the service to stop.
+set "STATE="
 for /l %%N in (1,1,30) do (
     for /f "tokens=3" %%S in ('sc.exe query "%SERVICE%" ^| findstr /I "STATE"') do set "STATE=%%S"
     if /I "!STATE!"=="STOPPED" goto SERVICE_STOPPED
@@ -98,38 +78,56 @@ for /l %%N in (1,1,30) do (
 for /f "tokens=3" %%S in ('sc.exe query "%SERVICE%" ^| findstr /I "STATE"') do set "STATE=%%S"
 if /I not "!STATE!"=="STOPPED" (
     echo [ERROR] Service did not stop within 30 seconds.
-    exit /b 6
+    exit /b 4
 )
 
 :SERVICE_STOPPED
 echo       Service stopped.
 
 echo.
-echo [2/6] Restoring/building dependencies...
+echo [2/7] Restoring dependencies...
 dotnet restore "%PROJECT%"
 if errorlevel 1 (
-    echo [ERROR] dotnet restore failed.
-    exit /b 7
+    echo [ERROR] dotnet restore failed. Service remains stopped.
+    exit /b 5
 )
 
 echo.
-echo [3/6] Building Release configuration...
+echo [3/7] Building Release configuration...
 dotnet build "%PROJECT%" -c Release --no-restore
 if errorlevel 1 (
-    echo [ERROR] dotnet build failed. Service has NOT been restarted.
+    echo [ERROR] dotnet build failed. Service remains stopped.
+    exit /b 6
+)
+
+echo.
+echo [4/7] Publishing GitHub repository to its own Publish folder...
+echo       %PUBLISH_DIR%
+dotnet publish "%PROJECT%" -c Release --no-restore -o "%PUBLISH_DIR%"
+if errorlevel 1 (
+    echo [ERROR] dotnet publish failed. Service remains stopped.
+    exit /b 7
+)
+
+if not exist "%PUBLISH_EXE%" (
+    echo [ERROR] Published executable was not found:
+    echo         %PUBLISH_EXE%
     exit /b 8
 )
 
 echo.
-echo [4/6] Publishing to installed service directory...
-dotnet publish "%PROJECT%" -c Release --no-restore -o "%PUBLISH_DIR%"
+echo [5/7] Pointing Windows service to the GitHub clone...
+sc.exe config "%SERVICE%" binPath= "\"%PUBLISH_EXE%\""
 if errorlevel 1 (
-    echo [ERROR] dotnet publish failed. Service has NOT been restarted.
+    echo [ERROR] Could not update the Windows service binary path.
     exit /b 9
 )
 
+echo       Service binary:
+echo       %PUBLISH_EXE%
+
 echo.
-echo [5/6] Starting %SERVICE%...
+echo [6/7] Starting %SERVICE%...
 sc.exe start "%SERVICE%" >nul
 if errorlevel 1 (
     echo [ERROR] Failed to start %SERVICE%.
@@ -137,6 +135,7 @@ if errorlevel 1 (
 )
 
 REM Wait up to 30 seconds for RUNNING state.
+set "STATE="
 for /l %%N in (1,1,30) do (
     for /f "tokens=3" %%S in ('sc.exe query "%SERVICE%" ^| findstr /I "STATE"') do set "STATE=%%S"
     if /I "!STATE!"=="RUNNING" goto SERVICE_RUNNING
@@ -153,7 +152,7 @@ if /I not "!STATE!"=="RUNNING" (
 echo       Service is RUNNING.
 
 echo.
-echo [6/6] Checking dashboard port 8009...
+echo [7/7] Checking dashboard port 8009...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=Get-NetTCPConnection -LocalPort 8009 -State Listen -ErrorAction SilentlyContinue; if($c){exit 0}else{exit 1}"
 if errorlevel 1 (
     echo [WARN] Port 8009 is not listening yet.
@@ -165,9 +164,10 @@ if errorlevel 1 (
 echo.
 echo ================================================================
 echo Deployment completed successfully.
-echo Dashboard: http://localhost:8009
- echo Publish : %PUBLISH_DIR%
-echo Service  : %SERVICE%
+echo Repository: %REPO_ROOT%
+echo Publish   : %PUBLISH_DIR%
+echo Service   : %SERVICE%
+echo Dashboard : http://localhost:8009
 echo ================================================================
 echo.
 exit /b 0
