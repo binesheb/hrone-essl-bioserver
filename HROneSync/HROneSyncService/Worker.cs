@@ -13,6 +13,7 @@ namespace HROneSyncService
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IHostApplicationLifetime _applicationLifetime;
 
         private readonly string _connectionString;
         private readonly string _apiUrl;
@@ -23,11 +24,13 @@ namespace HROneSyncService
         public Worker(
             ILogger<Worker> logger,
             IConfiguration config,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            IHostApplicationLifetime applicationLifetime)
         {
             _logger = logger;
             _config = config;
             _httpClientFactory = httpClientFactory;
+            _applicationLifetime = applicationLifetime;
 
             _connectionString = _config.GetConnectionString("DefaultConnection")
                 ?? throw new Exception("Missing DefaultConnection");
@@ -47,8 +50,7 @@ namespace HROneSyncService
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Worker started");
-            DashboardServer.Start(_connectionString, 8009);
-
+            DashboardServer.Start(_connectionString, 8009, () => _applicationLifetime.StopApplication());
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -58,20 +60,14 @@ namespace HROneSyncService
                     var logs = await GetNewLogs(lastId, stoppingToken);
 
                     if (logs.Count == 0)
-                    {
                         _logger.LogInformation("No new logs after {LastId}", lastId);
-                    }
                     else
                     {
-                        _logger.LogInformation("Processing {Count} logs starting from {LastId}",
-                            logs.Count, lastId);
-
+                        _logger.LogInformation("Processing {Count} logs starting from {LastId}", logs.Count, lastId);
                         foreach (var log in logs)
                         {
                             bool ok = await PushToHROne(log, stoppingToken);
-
-                            if (ok)
-                                await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
+                            if (ok) await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
                         }
                     }
                 }
@@ -90,10 +86,7 @@ namespace HROneSyncService
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync(token);
-
-            using var cmd = new SqlCommand(
-                "SELECT ISNULL(LastProcessedDeviceLogId, 0) FROM HROneSyncState", conn);
-
+            using var cmd = new SqlCommand("SELECT ISNULL(LastProcessedDeviceLogId, 0) FROM HROneSyncState", conn);
             return Convert.ToInt64(await cmd.ExecuteScalarAsync(token));
         }
 
@@ -101,33 +94,24 @@ namespace HROneSyncService
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync(token);
-
-            using var cmd = new SqlCommand(
-                "UPDATE HROneSyncState SET LastProcessedDeviceLogId = @id", conn);
-
+            using var cmd = new SqlCommand("UPDATE HROneSyncState SET LastProcessedDeviceLogId = @id", conn);
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync(token);
-
             _logger.LogInformation("Updated LastProcessedDeviceLogId to {Id}", id);
         }
 
         private async Task<List<DeviceLogDto>> GetNewLogs(long lastId, CancellationToken token)
         {
             var list = new List<DeviceLogDto>();
-
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync(token);
-
             using var cmd = new SqlCommand(@"
                 SELECT DeviceLogId, DeviceId, EmployeeCode, LogDate, Direction
                 FROM eBioServerNew.dbo.DeviceLogs
                 WHERE DeviceLogId > @id
                 ORDER BY DeviceLogId ASC", conn);
-
             cmd.Parameters.AddWithValue("@id", lastId);
-
             using var reader = await cmd.ExecuteReaderAsync(token);
-
             while (await reader.ReadAsync(token))
             {
                 list.Add(new DeviceLogDto
@@ -139,42 +123,28 @@ namespace HROneSyncService
                     Direction = reader.IsDBNull(4) ? null : reader.GetString(4)
                 });
             }
-
             return list;
         }
 
-private string MapMachine(int deviceId, string? direction)
-{
-    try
-    {
-        using var conn = new SqlConnection(_connectionString);
-        conn.Open();
-
-        using var cmd = new SqlCommand(
-            "SELECT DeviceName FROM eBioServerNew.dbo.Devices WHERE DeviceId = @id",
-            conn);
-
-        cmd.Parameters.AddWithValue("@id", deviceId);
-
-        var result = cmd.ExecuteScalar();
-        if (result != null)
-            return result.ToString() ?? "UNKNOWN";
-
-        return "UNKNOWN";
-    }
-    catch
-    {
-        return "UNKNOWN";
-    }
-}
-
+        private string MapMachine(int deviceId, string? direction)
+        {
+            try
+            {
+                using var conn = new SqlConnection(_connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("SELECT DeviceName FROM eBioServerNew.dbo.Devices WHERE DeviceId = @id", conn);
+                cmd.Parameters.AddWithValue("@id", deviceId);
+                var result = cmd.ExecuteScalar();
+                return result?.ToString() ?? "UNKNOWN";
+            }
+            catch { return "UNKNOWN"; }
+        }
 
         private async Task<bool> PushToHROne(DeviceLogDto log, CancellationToken token)
         {
             try
             {
                 var client = _httpClientFactory.CreateClient("HROneClient");
-
                 client.DefaultRequestHeaders.Clear();
                 client.DefaultRequestHeaders.Add("API-Key", _apiKey);
                 client.DefaultRequestHeaders.Add("domainCode", _domainCode);
@@ -196,21 +166,16 @@ private string MapMachine(int deviceId, string? direction)
 
                 string json = JsonSerializer.Serialize(payload);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
-
                 _logger.LogInformation("Pushing {Id} to HROne: {Json}", log.DeviceLogId, json);
-
                 var response = await client.PostAsync(_apiUrl, content, token);
                 string result = await response.Content.ReadAsStringAsync(token);
-
                 _logger.LogInformation("HROne Response for {Id}: {Result}", log.DeviceLogId, result);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("HROne returned {Status} for {Id}",
-                        (int)response.StatusCode, log.DeviceLogId);
+                    _logger.LogWarning("HROne returned {Status} for {Id}", (int)response.StatusCode, log.DeviceLogId);
                     return false;
                 }
-
                 return true;
             }
             catch (Exception ex)
