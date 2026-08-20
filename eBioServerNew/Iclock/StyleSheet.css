@@ -1,0 +1,90 @@
+﻿body
+{
+	font-size: 11px;
+	color: black;
+	font-style: normal;
+	font-family: Verdana;
+	background-image: url(Images/bck1.gif);
+	background-position-x: right;
+	background-position-y: top;
+	background-repeat:no-repeat;
+	background-color:White;
+	
+}
+.logOffButton , logOffButton:link, logOffButton:active, logOffButton:hover, logOffButton:visited
+{
+	font-size: 11px;
+	color: blue;
+	font-style: normal;
+	font-family: Verdana;
+	font-weight:bold;
+}
+
+.CompanyNameText
+{
+	font-size: 11px;
+	color: #282828;
+	font-weight:bold;
+}
+
+
+.tdText 
+{
+	font:11px Verdana;
+	color:#333333;
+}
+.option2
+{
+	font:11px Verdana;
+	color:#0033cc;				
+	padding-left:4px;
+	padding-right:4px;
+}
+a
+ {
+	font:11px Verdana;
+	color:#315686;
+	text-decoration:underline;
+}
+a:hover 
+{
+	color:crimson;
+}
+.rowEditTable 
+{
+    background-color: #EEEEEE;
+    border: 1px solid #000000;
+}
+.rowEditTable td 
+{
+    font-family: Verdana;
+    font-size: 10px;
+    color: #000000;		        
+}
+
+
+
+
+
+
+
+/*For Reports Management*/
+.Table 
+{
+    background-color: #EEEEEE;
+    border: 1px solid #000000;
+}
+.Table td 
+{
+    font-family: Verdana;
+    font-size: 11px;
+    color: #000000;		        
+}
+
+.WebControls
+{
+    font-family: Verdana;
+    font-size: 11px;
+    color: #000000;		        
+}
+

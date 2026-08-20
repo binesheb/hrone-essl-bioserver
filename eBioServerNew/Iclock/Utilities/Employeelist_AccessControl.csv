@@ -1,0 +1,4 @@
+EmployeeCode,EmployeeName,Base Location,Access Location,Role,Card Number,Verification Type,Expiry From,Expiry To,Group Id
+ID=1,Name1,Loc1,Loc1,Normal User,CARD=53829,Finger or Face or Card or Password,DateTime=2000-01-01 00:00:00,DateTime=3000-01-01 00:00:00,1
+ID=2,Name2,Loc2,"Loc1,Loc2",Admin User,CARD=63829,Finger,DateTime=2000-01-01 00:00:00,DateTime=3000-01-01 00:00:00,2
+ID=3,Name3,Loc3,Loc3,Normal User,,Face,DateTime=2000-01-01 00:00:00,DateTime=3000-01-01 00:00:00,3
