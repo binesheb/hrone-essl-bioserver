@@ -49,6 +49,7 @@ public static class DashboardServer
             var path = context.Request.Url?.AbsolutePath?.TrimEnd('/').ToLowerInvariant() ?? string.Empty;
             if (path is "" or "/") { await WriteHtml(context, BuildDashboardHtml(), 200); return; }
             if (path == "/api/data" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetDashboardData(), 200); return; }
+            if (path == "/api/punch-state" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetPunchState(), 200); return; }
             if (path == "/api/health" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetHealth(), 200); return; }
             if (path == "/api/checkpoint" && context.Request.HttpMethod == "POST") { await SetCheckpoint(context); return; }
             if (path == "/api/service/control" && context.Request.HttpMethod == "POST") { await ServiceControl(context); return; }
@@ -71,6 +72,20 @@ public static class DashboardServer
         catch (Exception ex)
         {
             return new { ok = false, database = "Failed", service = GetServiceStatus(), error = ex.Message, type = ex.GetType().Name, checkedAt = DateTime.Now };
+        }
+    }
+
+    private static async Task<object> GetPunchState()
+    {
+        try
+        {
+            await using var c = await OpenConnection();
+            var latest = await ScalarLong(c, "SELECT ISNULL(MAX(DeviceLogId),0) FROM eBioServerNew.dbo.DeviceLogs");
+            return new { ok = true, latestLogId = latest, checkedAt = DateTime.Now };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, latestLogId = 0L, error = ex.Message, type = ex.GetType().Name, checkedAt = DateTime.Now };
         }
     }
 
@@ -321,21 +336,113 @@ ELSE INSERT INTO dbo.HROneSyncState (LastProcessedDeviceLogId) VALUES (@Value);"
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HROne Sync Dashboard</title>
 <style>
-:root{--bg:#0b1020;--p:#131a2b;--b:#26324b;--t:#edf2ff;--m:#93a1bd;--g:#35d07f;--a:#ffbe55;--r:#ff647c;--bl:#6ea8fe}*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial;background:var(--bg);color:var(--t)}header{padding:20px 30px;border-bottom:1px solid var(--b);display:flex;justify-content:space-between;gap:12px;align-items:center}.wrap{max-width:1400px;margin:auto;padding:24px}.grid{display:grid;gap:16px}.cards{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}.panel{background:var(--p);border:1px solid var(--b);border-radius:14px;padding:18px;margin-bottom:16px}.label{font-size:12px;color:var(--m);text-transform:uppercase}.value{font-size:30px;font-weight:700;margin-top:7px}button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:var(--bl);color:#07101f}button.danger{background:var(--r);color:#fff}button.green{background:var(--g);color:#07101f}button.yellow{background:var(--a);color:#07101f}input{background:#0b1020;color:var(--t);border:1px solid var(--b);border-radius:8px;padding:10px;width:100%;margin:8px 0}.msg{margin-top:8px;color:var(--m)}.errorbox{background:#3a1720;border:1px solid var(--r);padding:14px;border-radius:10px;margin-bottom:16px}.health{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--a)}.dot.ok{background:var(--g)}.dot.bad{background:var(--r)}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--b);text-align:left}.scroll{overflow:auto}.ok{color:var(--g)}.warn{color:var(--a)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:16px}.service-buttons{display:flex;gap:10px;flex-wrap:wrap}@media(max-width:700px){.actions{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}}
+:root{--bg:#0b1020;--p:#131a2b;--b:#26324b;--t:#edf2ff;--m:#93a1bd;--g:#35d07f;--a:#ffbe55;--r:#ff647c;--bl:#6ea8fe}*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial;background:var(--bg);color:var(--t)}header{padding:20px 30px;border-bottom:1px solid var(--b);display:flex;justify-content:space-between;gap:12px;align-items:center}.wrap{max-width:1400px;margin:auto;padding:24px}.grid{display:grid;gap:16px}.cards{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}.panel{background:var(--p);border:1px solid var(--b);border-radius:14px;padding:18px;margin-bottom:16px}.label{font-size:12px;color:var(--m);text-transform:uppercase}.value{font-size:30px;font-weight:700;margin-top:7px}button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:var(--bl);color:#07101f}button.danger{background:var(--r);color:#fff}button.green{background:var(--g);color:#07101f}button.yellow{background:var(--a);color:#07101f}input{background:#0b1020;color:var(--t);border:1px solid var(--b);border-radius:8px;padding:10px;width:100%;margin:8px 0}.msg{margin-top:8px;color:var(--m)}.small{font-size:12px;color:var(--m)}.errorbox{background:#3a1720;border:1px solid var(--r);padding:14px;border-radius:10px;margin-bottom:16px}.health{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--a)}.dot.ok{background:var(--g)}.dot.bad{background:var(--r)}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--b);text-align:left}.scroll{overflow:auto}.ok{color:var(--g)}.warn{color:var(--a)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:16px}.service-buttons{display:flex;gap:10px;flex-wrap:wrap}.refresh-box{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.monitor{font-size:12px;color:var(--m)}@media(max-width:700px){.actions{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.refresh-box{align-items:flex-start}}
 </style></head>
-<body><header><div><b>HROne Sync Dashboard</b><div class="msg">ESSL / eBioServer → HROne</div></div><div class="health"><span id="healthDot" class="dot"></span><span id="healthText">Checking...</span><button onclick="load()">Refresh now</button></div></header>
+<body><header><div><b>HROne Sync Dashboard</b><div class="msg">ESSL / eBioServer → HROne</div></div><div class="health"><span id="healthDot" class="dot"></span><span id="healthText">Checking...</span><div class="refresh-box"><button onclick="manualRefresh()">Refresh now</button><div id="lastRefresh" class="small">Last refresh: —</div><div id="monitorStatus" class="monitor">Background monitoring: starting...</div></div></div></header>
 <div class="wrap"><div id="errorBox" class="errorbox" style="display:none"></div>
 <div class="grid cards"><div class="panel"><div class="label">Today's Punches</div><div id="total" class="value">—</div></div><div class="panel"><div class="label">Uploaded</div><div id="uploaded" class="value">—</div></div><div class="panel"><div class="label">Pending</div><div id="pending" class="value">—</div></div><div class="panel"><div class="label">Success Rate</div><div id="rate" class="value">—</div></div></div>
 <div class="actions"><div class="panel"><div class="label">Reset Sync Checkpoint</div><p class="msg">Set LastProcessedDeviceLogId. Entries after this ID will be processed again.</p><input id="checkpoint" type="number" min="0" placeholder="DeviceLogId"><button onclick="setCheckpoint()">Update Checkpoint</button><div id="checkpointMsg" class="msg"></div></div>
-<div class="panel"><div class="label">Service Control</div><p class="msg">Control the Windows service running this dashboard.</p><div class="service-buttons"><button class="danger" onclick="serviceAction('stop')">Stop Service</button><button class="green" onclick="serviceAction('restart')">Restart Service</button><button class="yellow" onclick="serviceAction('update')">Update Service</button></div><div id="serviceMsg" class="msg"></div></div></div>
+<div class="panel"><div class="label">Service Control</div><p class="msg">Control the Windows service running this dashboard.</p><div class="service-buttons"><button class="danger" onclick="serviceControl('stop')">Stop Service</button><button class="yellow" onclick="serviceControl('restart')">Restart Service</button><button class="green" onclick="serviceControl('update')">Update Service</button></div><div id="serviceMsg" class="msg"></div></div></div>
 <div class="panel"><div class="label">Recent Punches</div><div class="scroll"><table><thead><tr><th>ID</th><th>Time</th><th>Employee</th><th>Device</th><th>Status</th></tr></thead><tbody id="recent"><tr><td colspan="5">Loading...</td></tr></tbody></table></div></div>
-<div class="msg">Last updated: <span id="updated">—</span></div></div>
+<div class="msg">Dashboard refreshes immediately when a new punch is detected. If there is no new punch, a full refresh is performed at a safe interval.</div></div>
 <script>
-const $=id=>document.getElementById(id);let loading=false;function esc(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]))}
-async function load(){if(loading)return;loading=true;try{const r=await fetch('/api/data?t='+Date.now(),{cache:'no-store'}),d=await r.json();$('updated').textContent=new Date().toLocaleString();if(!d.ok){$('healthDot').className='dot bad';$('healthText').textContent='Database error';$('errorBox').style.display='block';$('errorBox').textContent='Dashboard data error: '+d.type+': '+d.error;return}$('errorBox').style.display='none';$('healthDot').className=d.health.service==='Running'?'dot ok':'dot bad';$('healthText').textContent='Database connected · Service '+d.health.service;$('total').textContent=d.summary.totalToday;$('uploaded').textContent=d.summary.uploadedToday;$('pending').textContent=d.summary.pending;$('rate').textContent=d.summary.successRate+'%';$('checkpoint').value=d.summary.lastProcessedId;$('recent').innerHTML=d.recent.length?d.recent.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.time)}</td><td>${esc(x.employee)}</td><td>${esc(x.machine)}</td><td class="${x.status==='Uploaded'?'ok':'warn'}">${esc(x.status)}</td></tr>`).join(''):'<tr><td colspan="5">No punches found.</td></tr>'}catch(e){$('healthDot').className='dot bad';$('healthText').textContent='Dashboard API error';$('errorBox').style.display='block';$('errorBox').textContent='Cannot read dashboard API: '+e}finally{loading=false}}
-async function setCheckpoint(){const v=Number($('checkpoint').value);if(!Number.isInteger(v)||v<0){$('checkpointMsg').textContent='Enter a valid non-negative DeviceLogId.';return}if(!confirm('Set LastProcessedDeviceLogId to '+v+'? This may cause previous punches to sync again.'))return;const r=await fetch('/api/checkpoint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lastProcessedDeviceLogId:v})}),d=await r.json();$('checkpointMsg').textContent=d.success?`Updated: ${d.oldValue} → ${d.newValue}`:(d.error||'Update failed');load()}
-async function serviceAction(action){const labels={stop:'Stop the HROne Sync Service now?',restart:'Restart the HROne Sync Service now?',update:'Update the Windows service path to this running executable?'};if(!confirm(labels[action]))return;$('serviceMsg').textContent='Processing '+action+'...';try{const r=await fetch('/api/service/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})}),d=await r.json();$('serviceMsg').textContent=d.message||d.error||'Request completed.';if(action==='restart'||action==='stop')setTimeout(()=>location.reload(),5000);else load()}catch(e){$('serviceMsg').textContent='Request failed: '+e}}
-load();
+const $=id=>document.getElementById(id);
+const PUNCH_POLL_MS=10000;
+const SAFE_FULL_REFRESH_MS=60000;
+let latestKnownLogId=null;
+let lastFullRefreshAt=0;
+let loading=false;
+let pollTimer=null;
+
+function esc(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]))}
+function setMonitor(text){$('monitorStatus').textContent='Background monitoring: '+text}
+
+async function load(reason='Manual'){
+    if(loading)return;
+    loading=true;
+    try{
+        const r=await fetch('/api/data?t='+Date.now(),{cache:'no-store'});
+        const d=await r.json();
+        if(d.ok){
+            $('errorBox').style.display='none';
+            $('healthDot').className='dot ok';
+            $('healthText').textContent='Database connected';
+            $('total').textContent=d.summary.totalToday;
+            $('uploaded').textContent=d.summary.uploadedToday;
+            $('pending').textContent=d.summary.pending;
+            $('rate').textContent=d.summary.successRate+'%';
+            $('checkpoint').value=d.summary.lastProcessedId;
+            $('recent').innerHTML=d.recent.length?d.recent.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.time)}</td><td>${esc(x.employee)}</td><td>${esc(x.machine)}</td><td class="${x.status==='Uploaded'?'ok':'warn'}">${esc(x.status)}</td></tr>`).join(''):'<tr><td colspan="5">No punches found.</td></tr>';
+            latestKnownLogId=d.summary.latestLogId;
+            lastFullRefreshAt=Date.now();
+            $('lastRefresh').textContent='Last refresh: '+new Date().toLocaleString()+' · '+reason;
+        }else{
+            $('healthDot').className='dot bad';
+            $('healthText').textContent='Database error';
+            $('errorBox').style.display='block';
+            $('errorBox').textContent='Dashboard data error: '+d.type+': '+d.error;
+        }
+    }catch(e){
+        $('healthDot').className='dot bad';
+        $('healthText').textContent='Dashboard API error';
+        $('errorBox').style.display='block';
+        $('errorBox').textContent='Cannot read dashboard API: '+e;
+    }finally{loading=false}
+}
+
+async function checkForNewPunch(){
+    if(document.hidden){schedulePoll();return;}
+    try{
+        const r=await fetch('/api/punch-state?t='+Date.now(),{cache:'no-store'});
+        const d=await r.json();
+        if(!d.ok){setMonitor('waiting for database');schedulePoll();return;}
+        const current=Number(d.latestLogId||0);
+        if(latestKnownLogId===null){
+            latestKnownLogId=current;
+        }else if(current>latestKnownLogId){
+            setMonitor('new punch detected · refreshing');
+            await load('New punch detected');
+        }else if(Date.now()-lastFullRefreshAt>=SAFE_FULL_REFRESH_MS){
+            setMonitor('safe interval refresh');
+            await load('Safe interval');
+        }else{
+            const remaining=Math.max(0,Math.ceil((SAFE_FULL_REFRESH_MS-(Date.now()-lastFullRefreshAt))/1000));
+            setMonitor('active · next full refresh in '+remaining+'s');
+        }
+    }catch(e){setMonitor('temporarily unavailable')}
+    schedulePoll();
+}
+function schedulePoll(){clearTimeout(pollTimer);pollTimer=setTimeout(checkForNewPunch,PUNCH_POLL_MS)}
+async function manualRefresh(){await load('Manual');setMonitor('active · checking for new punches');schedulePoll()}
+
+async function setCheckpoint(){
+    const v=Number($('checkpoint').value);
+    if(!Number.isInteger(v)||v<0){$('checkpointMsg').textContent='Enter a valid non-negative DeviceLogId.';return}
+    if(!confirm('Set LastProcessedDeviceLogId to '+v+'? This may cause previous punches to sync again.'))return;
+    try{
+        const r=await fetch('/api/checkpoint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lastProcessedDeviceLogId:v})});
+        const d=await r.json();
+        $('checkpointMsg').textContent=d.success?`Updated: ${d.oldValue} → ${d.newValue}`:(d.error||'Update failed');
+        await load('Checkpoint updated');
+    }catch(e){$('checkpointMsg').textContent='Update failed: '+e}
+}
+
+async function serviceControl(action){
+    const labels={stop:'Stop HROne Sync Service now?',restart:'Restart HROne Sync Service now?',update:'Update the Windows service path to this running executable?'};
+    if(!confirm(labels[action]))return;
+    try{
+        $('serviceMsg').textContent='Processing '+action+'...';
+        const r=await fetch('/api/service/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+        const d=await r.json();
+        $('serviceMsg').textContent=d.message||d.error||'Completed';
+        if(action!=='stop')await load('Service '+action);
+    }catch(e){$('serviceMsg').textContent='Service control failed: '+e}
+}
+
+load('Initial');
+setMonitor('active · checking for new punches');
+schedulePoll();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){load('Tab active');schedulePoll()}});
 </script></body></html>
 """;
 }
