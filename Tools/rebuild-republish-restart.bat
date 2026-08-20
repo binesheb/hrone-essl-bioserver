@@ -2,17 +2,10 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 REM ================================================================
-REM HROne ESSL Biometric - LOCATION-AWARE BUILD / DEPLOY / RESTART
-REM No mandatory deployment location. The instance is determined
-REM from this BAT's own Tools folder.
-REM
-REM Instance structure:
-REM   <INSTANCE>\Tools\this.bat
-REM   <INSTANCE>\HROneSync\HROneSyncService\HROneSyncService.csproj
-REM   <INSTANCE>\HROneSync\Publish\HROneSyncService.exe
-REM
-REM GitHub and production are independent instances. This script only
-REM operates on the instance that contains the BAT being executed.
+REM HROne ESSL Biometric - LOCATION-AWARE UPDATE / BUILD / DEPLOY
+REM GitHub instance: automatically pulls origin/main before rebuilding.
+REM Production instance: if no .git folder exists, skips Git update.
+REM The instance is always determined from this BAT's own location.
 REM ================================================================
 
 set "SERVICE=HROneSyncService"
@@ -26,7 +19,6 @@ set "PUBLISH_EXE=%PUBLISH_DIR%\HROneSyncService.exe"
 
 where dotnet >nul 2>&1 || (echo [ERROR] dotnet was not found in PATH.& exit /b 1)
 net session >nul 2>&1 || (echo [ERROR] Run this BAT as Administrator.& exit /b 2)
-
 if not exist "%PROJECT%" (echo [ERROR] Service project not found: %PROJECT%& exit /b 3)
 if not exist "%PUBLISH_DIR%\" (echo [ERROR] Existing Publish folder not found: %PUBLISH_DIR%& exit /b 4)
 
@@ -43,9 +35,56 @@ echo Service  : %SERVICE%
 echo ================================================================
 echo.
 
+REM 0. If this is a Git clone, automatically pull the latest main branch.
+if exist "%INSTANCE_ROOT%\.git\" (
+    echo [0/9] Git repository detected. Checking for updates...
+    git --version >nul 2>&1
+    if errorlevel 1 (echo [ERROR] Git was not found in PATH.& exit /b 15)
+
+    git diff --quiet
+    if errorlevel 1 (
+        echo [ERROR] Local uncommitted changes detected.
+        echo         Automatic update stopped to protect local changes.
+        exit /b 16
+    )
+    git diff --cached --quiet
+    if errorlevel 1 (
+        echo [ERROR] Local staged changes detected.
+        echo         Automatic update stopped to protect local changes.
+        exit /b 17
+    )
+
+    git rev-parse --verify origin/main >nul 2>&1
+    if errorlevel 1 (
+        echo [0/9] Fetching origin/main...
+        git fetch origin main
+        if errorlevel 1 (echo [ERROR] Git fetch failed.& exit /b 18)
+    ) else (
+        git fetch origin main
+        if errorlevel 1 (echo [ERROR] Git fetch failed.& exit /b 18)
+    )
+
+    for /f %%A in ('git rev-parse HEAD') do set "LOCAL_SHA=%%A"
+    for /f %%A in ('git rev-parse origin/main') do set "REMOTE_SHA=%%A"
+
+    if /I "!LOCAL_SHA!"=="!REMOTE_SHA!" (
+        echo       Already up to date: !LOCAL_SHA!
+    ) else (
+        echo       New version detected.
+        echo       Local : !LOCAL_SHA!
+        echo       Remote: !REMOTE_SHA!
+        git pull --ff-only origin main
+        if errorlevel 1 (echo [ERROR] Git pull failed. Service was NOT stopped.& exit /b 19)
+        echo       GitHub version updated successfully.
+    )
+) else (
+    echo [0/9] No Git repository detected. Using this deployment instance as-is.
+)
+
 REM 1. Stop service.
 sc.exe query "%SERVICE%" >nul 2>&1
 if not errorlevel 1 (
+    echo.
     echo [1/9] Stopping %SERVICE%...
     sc.exe stop "%SERVICE%" >nul 2>&1
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $s=(Get-Service -Name '%SERVICE%' -ErrorAction SilentlyContinue).Status; if($s -eq 'Stopped'){exit 0}; Start-Sleep -Milliseconds 500 } while((Get-Date) -lt $deadline); exit 1"
@@ -55,7 +94,7 @@ if not errorlevel 1 (
 )
 echo       Service is STOPPED.
 
-REM 2. Clean source build artifacts BEFORE restore.
+REM 2. Clean source build artifacts.
 echo.
 echo [2/9] Cleaning source build artifacts...
 if exist "%PROJECT_DIR%\bin" (
@@ -68,7 +107,7 @@ if exist "%PROJECT_DIR%\obj" (
 )
 echo       Source bin/obj cleaned.
 
-REM 3. Restore after cleaning.
+REM 3. Restore.
 echo.
 echo [3/9] Restoring dependencies...
 dotnet restore "%PROJECT%"
@@ -80,7 +119,7 @@ echo [4/9] Building Release...
 dotnet build "%PROJECT%" -c Release --no-restore
 if errorlevel 1 (echo [ERROR] Build failed. Service remains stopped.& exit /b 8)
 
-REM 5. Publish to this instance's existing Publish folder.
+REM 5. Publish.
 echo.
 echo [5/9] Publishing to:
 echo       %PUBLISH_DIR%
@@ -88,16 +127,10 @@ dotnet publish "%PROJECT%" -c Release --no-restore -o "%PUBLISH_DIR%"
 if errorlevel 1 (echo [ERROR] Publish failed. Service remains stopped.& exit /b 9)
 if not exist "%PUBLISH_EXE%" (echo [ERROR] Published executable not found: %PUBLISH_EXE%& exit /b 10)
 
-REM 6. Configure Windows Service.
-REM IMPORTANT: sc.exe is invoked directly from CMD. Its syntax requires
-REM the option name and '=' together, followed by a SPACE, then the value:
-REM     binPath= "C:\path\service.exe" start= auto
-REM Do not pass these options through PowerShell as separate quoted strings;
-REM that can make SCM report "Invalid start= field".
+REM 6. Configure Windows Service to THIS instance.
 echo.
 echo [6/9] Switching Windows service to THIS INSTANCE...
 echo       Target: %PUBLISH_EXE%
-
 sc.exe query "%SERVICE%" >nul 2>&1
 if errorlevel 1 (
     sc.exe create "%SERVICE%" binPath= "%PUBLISH_EXE%" start= auto DisplayName= "HROneSyncService"
@@ -106,11 +139,10 @@ if errorlevel 1 (
     sc.exe config "%SERVICE%" binPath= "%PUBLISH_EXE%" start= auto
     if errorlevel 1 (echo [ERROR] Could not change Windows service path.& exit /b 11)
 )
-
 sc.exe description "%SERVICE%" "HROne ESSL biometric synchronization service." >nul 2>&1
 sc.exe failure "%SERVICE%" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul 2>&1
 
-REM 7. Verify the actual SCM ImagePath using Win32_Service.
+REM 7. Verify actual SCM ImagePath.
 echo.
 echo [7/9] Verifying Windows service path...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$expected=(Resolve-Path -LiteralPath '%PUBLISH_EXE%').Path; $svc=Get-CimInstance Win32_Service -Filter \"Name='%SERVICE%'\"; if($null -eq $svc){Write-Error 'Service not found after configuration.';exit 1}; $actual=$svc.PathName; Write-Host ('       SCM Path: '+$actual); $normalized=$actual.Trim(); if($normalized.StartsWith('''') -and $normalized.EndsWith('''')){$normalized=$normalized.Substring(1,$normalized.Length-2)}; if($normalized -ne $expected){Write-Error ('Service is mapped to the wrong instance. Expected: '+$expected+' ; Actual: '+$actual);exit 2};exit 0"
