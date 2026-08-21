@@ -206,9 +206,10 @@ public static class DashboardServer
     private static async Task<List<object>> GetRecent(SqlConnection c, long last)
     {
         var r = new List<object>();
-        const string sql = @"SELECT TOP 25 d.DeviceLogId, d.EmployeeCode, e.EmployeeName, d.LogDate, d.DeviceId
+        const string sql = @"SELECT TOP 25 d.DeviceLogId, d.EmployeeCode, e.EmployeeName, d.LogDate, d.DeviceId, dev.DeviceName
 FROM eBioServerNew.dbo.DeviceLogs d
 LEFT JOIN eBioServerNew.dbo.Employees e ON e.EmployeeCode = d.EmployeeCode
+LEFT JOIN eBioServerNew.dbo.Devices dev ON dev.DeviceId = d.DeviceId
 ORDER BY d.DeviceLogId DESC";
         await using var cmd = new SqlCommand(sql, c) { CommandTimeout = 10 };
         await using var rd = await cmd.ExecuteReaderAsync();
@@ -216,7 +217,8 @@ ORDER BY d.DeviceLogId DESC";
         {
             var code = rd.IsDBNull(1) ? "-" : rd.GetString(1);
             var name = rd.IsDBNull(2) ? "-" : rd.GetString(2);
-            r.Add(new { id = rd.GetInt64(0), employee = name, employeeCode = code, time = rd.GetDateTime(3).ToString("yyyy-MM-dd HH:mm:ss"), machine = rd.GetValue(4).ToString(), status = rd.GetInt64(0) <= last ? "Uploaded" : "Pending" });
+            var deviceName = rd.IsDBNull(5) ? "-" : rd.GetString(5);
+            r.Add(new { id = rd.GetInt64(0), employee = name, employeeCode = code, time = rd.GetDateTime(3).ToString("yyyy-MM-dd HH:mm:ss"), machine = deviceName, status = rd.GetInt64(0) <= last ? "Uploaded" : "Pending" });
         }
         return r;
     }
@@ -231,7 +233,7 @@ ORDER BY d.DeviceLogId DESC";
 <div class="cards"><div class="panel card"><div class="label">Today</div><div id="today" class="value">—</div><div class="small">Punch records</div></div><div class="panel card"><div class="label">Uploaded Today</div><div id="uploaded" class="value">—</div><div class="small">Reached checkpoint</div></div><div class="panel card"><div class="label">Pending</div><div id="pending" class="value">—</div><div class="small">Awaiting HROne sync</div></div><div class="panel card"><div class="label">Success</div><div id="rate" class="value">—</div><div class="small">Today's checkpoint ratio</div></div></div>
 <div class="topgrid"><section class="panel"><div class="sectionhead"><h3>Synchronization</h3><span class="small">Current processing position</span></div><div class="checkpointrow"><div class="checkpointstat"><div class="label">Last Processed</div><div id="checkpoint" class="value">—</div></div><div class="small">→</div><div class="checkpointstat"><div class="label">Latest DeviceLogId</div><div id="latest" class="value">—</div></div><div class="checkpointstat"><div class="label">Pending</div><div id="pendingInline" class="value">—</div></div></div></section><section class="panel"><div class="sectionhead"><h3>Service Control</h3><span id="serviceState" class="service-state"><span class="dot"></span>Checking</span></div><div class="servicebar"><span class="small">Windows service lifecycle</span><div class="service-actions"><button id="stop" class="danger">Stop</button><button id="restart" class="yellow">Restart</button><button id="update" class="green">Update</button></div></div><div id="serviceMsg" class="msg"></div></section></div>
 <section class="panel"><div class="sectionhead"><h3>Sync Control</h3><span class="small">Change checkpoint only when required</span></div><div class="syncgrid"><div class="syncbox"><div class="label">Sync from Date</div><div class="small">Find the first punch on a day and calculate a safe checkpoint immediately before it.</div><div class="row" style="margin-top:7px"><div class="field"><label for="syncDate">Date</label><input id="syncDate" type="date"></div><button id="findDate" class="green">Find First Punch</button></div><div id="dateResult" class="msg"></div><div id="dateAction" class="actionline"></div></div><div class="syncbox"><div class="label">Manual Checkpoint</div><div class="small">Set a specific DeviceLogId. Setting it does not start resync until you explicitly choose it.</div><div class="row" style="margin-top:7px"><div class="field"><label for="checkpointInput">DeviceLogId</label><input id="checkpointInput" type="number" min="0" placeholder="DeviceLogId"></div><button id="setCheckpoint" class="yellow">Set Checkpoint</button></div><div id="checkpointMsg" class="msg"></div><div id="resyncAction" class="actionline"></div></div></div></section>
-<section class="panel"><div class="sectionhead"><h3>Recent Punches</h3><span class="small">Latest 25 records</span></div><div class="tablewrap"><table><thead><tr><th>DeviceLogId</th><th>Employee Code</th><th>Employee Name</th><th>Time</th><th>Device</th><th>Status</th></tr></thead><tbody id="recent"></tbody></table></div></section></main>
+<section class="panel"><div class="sectionhead"><h3>Recent Punches</h3><span class="small">Latest 25 records</span></div><div class="tablewrap"><table><thead><tr><th>DeviceLogId</th><th>Employee Code</th><th>Employee Name</th><th>Time</th><th>Device Name</th><th>Status</th></tr></thead><tbody id="recent"></tbody></table></div></section></main>
 <script>
 let busy=false,lastKnownLogId=null;const $=id=>document.getElementById(id);
 async function getJson(url,options={}){const r=await fetch(url+'?t='+Date.now(),{cache:'no-store',...options});const j=await r.json();if(!r.ok&&j.error)throw new Error(j.error);return j}
