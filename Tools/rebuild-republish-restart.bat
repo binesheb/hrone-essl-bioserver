@@ -2,8 +2,9 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 REM ================================================================
-REM HROne ESSL Biometric - LOCATION-AWARE UPDATE / BUILD / DEPLOY
-REM GitHub instance: automatically pulls origin/main before rebuilding.
+REM HROne ESSL Biometric - LOCATION-AWARE FORCE UPDATE / BUILD / DEPLOY
+REM GitHub instance: FORCE syncs origin/main and discards ALL local
+REM tracked/staged/untracked changes before rebuilding.
 REM Production instance: if no .git folder exists, skips Git update.
 REM The instance is always determined from this BAT's own location.
 REM ================================================================
@@ -27,6 +28,7 @@ cd /d "%INSTANCE_ROOT%"
 echo.
 echo ================================================================
 echo LOCATION-AWARE HROne ESSL DEPLOYMENT
+ echo FORCE UPDATE MODE - LOCAL GIT CHANGES WILL BE DISCARDED
 echo ================================================================
 echo Instance : %INSTANCE_ROOT%
 echo Source   : %PROJECT%
@@ -35,48 +37,29 @@ echo Service  : %SERVICE%
 echo ================================================================
 echo.
 
-REM 0. If this is a Git clone, automatically pull the latest main branch.
+REM 0. If this is a Git clone, force it to exactly match origin/main.
 if exist "%INSTANCE_ROOT%\.git\" (
-    echo [0/9] Git repository detected. Checking for updates...
+    echo [0/9] Git repository detected. Forcing origin/main...
     git --version >nul 2>&1
     if errorlevel 1 (echo [ERROR] Git was not found in PATH.& exit /b 15)
 
-    git diff --quiet
-    if errorlevel 1 (
-        echo [ERROR] Local uncommitted changes detected.
-        echo         Automatic update stopped to protect local changes.
-        exit /b 16
-    )
-    git diff --cached --quiet
-    if errorlevel 1 (
-        echo [ERROR] Local staged changes detected.
-        echo         Automatic update stopped to protect local changes.
-        exit /b 17
-    )
+    echo       Fetching latest origin/main...
+    git fetch origin main
+    if errorlevel 1 (echo [ERROR] Git fetch failed.& exit /b 18)
 
-    git rev-parse --verify origin/main >nul 2>&1
-    if errorlevel 1 (
-        echo [0/9] Fetching origin/main...
-        git fetch origin main
-        if errorlevel 1 (echo [ERROR] Git fetch failed.& exit /b 18)
-    ) else (
-        git fetch origin main
-        if errorlevel 1 (echo [ERROR] Git fetch failed.& exit /b 18)
-    )
+    echo       Discarding local tracked and staged changes...
+    git reset --hard origin/main
+    if errorlevel 1 (echo [ERROR] Git reset failed.& exit /b 19)
 
+    echo       Removing local untracked files and folders...
+    git clean -fd
+    if errorlevel 1 (echo [ERROR] Git clean failed.& exit /b 20)
+
+    echo       Verifying exact match with origin/main...
     for /f %%A in ('git rev-parse HEAD') do set "LOCAL_SHA=%%A"
     for /f %%A in ('git rev-parse origin/main') do set "REMOTE_SHA=%%A"
-
-    if /I "!LOCAL_SHA!"=="!REMOTE_SHA!" (
-        echo       Already up to date: !LOCAL_SHA!
-    ) else (
-        echo       New version detected.
-        echo       Local : !LOCAL_SHA!
-        echo       Remote: !REMOTE_SHA!
-        git pull --ff-only origin main
-        if errorlevel 1 (echo [ERROR] Git pull failed. Service was NOT stopped.& exit /b 19)
-        echo       GitHub version updated successfully.
-    )
+    if /I not "!LOCAL_SHA!"=="!REMOTE_SHA!" (echo [ERROR] Local repository does not match origin/main.& exit /b 21)
+    echo       Repository is now exactly at: !REMOTE_SHA!
 ) else (
     echo [0/9] No Git repository detected. Using this deployment instance as-is.
 )
@@ -97,14 +80,8 @@ echo       Service is STOPPED.
 REM 2. Clean source build artifacts.
 echo.
 echo [2/9] Cleaning source build artifacts...
-if exist "%PROJECT_DIR%\bin" (
-    rmdir /s /q "%PROJECT_DIR%\bin"
-    if exist "%PROJECT_DIR%\bin" (echo [ERROR] Could not remove bin folder.& exit /b 6)
-)
-if exist "%PROJECT_DIR%\obj" (
-    rmdir /s /q "%PROJECT_DIR%\obj"
-    if exist "%PROJECT_DIR%\obj" (echo [ERROR] Could not remove obj folder.& exit /b 6)
-)
+if exist "%PROJECT_DIR%\bin" (rmdir /s /q "%PROJECT_DIR%\bin" & if exist "%PROJECT_DIR%\bin" (echo [ERROR] Could not remove bin folder.& exit /b 6))
+if exist "%PROJECT_DIR%\obj" (rmdir /s /q "%PROJECT_DIR%\obj" & if exist "%PROJECT_DIR%\obj" (echo [ERROR] Could not remove obj folder.& exit /b 6))
 echo       Source bin/obj cleaned.
 
 REM 3. Restore.
