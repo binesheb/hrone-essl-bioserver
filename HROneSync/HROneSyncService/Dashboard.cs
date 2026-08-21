@@ -143,8 +143,16 @@ public static class DashboardServer
     {
         var request = await ReadJson<ServiceControlRequest>(context); var action = request?.Action?.Trim().ToLowerInvariant();
         if (action is not ("stop" or "restart" or "update")) { await WriteJson(context, new { error = "Action must be stop, restart, or update." }, 400); return; }
+        if (action == "update")
+        {
+            var started = ScheduleGitHubUpdate();
+            await WriteJson(context, started
+                ? new { success = true, action, message = "GitHub update started. The service will stop, fetch origin/main, rebuild, republish, reconfigure and restart automatically." }
+                : new { success = false, action, message = "Could not start the GitHub update script." },
+                started ? 200 : 500);
+            return;
+        }
         var config = ConfigureServiceToCurrentExecutable(); if (!config.Success) { await WriteJson(context, new { success = false, action, message = config.Message }, 500); return; }
-        if (action == "update") { await WriteJson(context, new { success = true, action, message = "Windows service path updated.", path = CurrentExecutablePath() }, 200); return; }
         if (_stopApplication is null) { await WriteJson(context, new { error = "Service lifecycle control is not configured." }, 503); return; }
         if (action == "stop") { await WriteJson(context, new { success = true, action, message = "Stop requested." }, 200); _ = Task.Run(async () => { await Task.Delay(750); _stopApplication(); }); return; }
         await WriteJson(context, new { success = true, action, message = "Restart requested." }, 200); _ = Task.Run(async () => { await Task.Delay(750); ScheduleServiceStart(); _stopApplication(); });
@@ -156,6 +164,27 @@ public static class DashboardServer
     }
     private static string CurrentExecutablePath() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "HROneSyncService.exe"));
     private static void ScheduleServiceStart() { try { var p = new ProcessStartInfo { FileName = "cmd.exe", UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden }; p.ArgumentList.Add("/c"); p.ArgumentList.Add("timeout /t 3 /nobreak >nul & sc.exe start HROneSyncService >nul"); Process.Start(p); } catch { } }
+    private static bool ScheduleGitHubUpdate()
+    {
+        try
+        {
+            var instanceRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".."));
+            var script = Path.Combine(instanceRoot, "Tools", "dashboard-update-from-github.bat");
+            if (!File.Exists(script)) return false;
+            var p = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = instanceRoot
+            };
+            p.ArgumentList.Add("/c");
+            p.ArgumentList.Add($"call \"{script}\"");
+            Process.Start(p);
+            return true;
+        }
+        catch { return false; }
+    }
     private static string GetServiceStatus() { var r = RunSc("query", ServiceName); if (r.ExitCode != 0) return "Not installed"; if (r.Output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase)) return "Running"; if (r.Output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)) return "Stopped"; return "Transitioning"; }
     private static (int ExitCode, string Output) RunSc(params string[] arguments) { try { var p = new ProcessStartInfo { FileName = "sc.exe", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true }; foreach (var a in arguments) p.ArgumentList.Add(a); using var process = Process.Start(p); if (process is null) return (-1, "Unable to start sc.exe."); var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit(10000); return (process.ExitCode, string.IsNullOrWhiteSpace(error) ? output.Trim() : error.Trim()); } catch (Exception ex) { return (-1, ex.Message); } }
 
