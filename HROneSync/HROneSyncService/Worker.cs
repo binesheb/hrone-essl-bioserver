@@ -20,6 +20,7 @@ namespace HROneSyncService
         private readonly string _apiKey;
         private readonly string _domainCode;
         private readonly int _pollSeconds;
+        private readonly DeviceSyncControl _deviceSyncControl;
 
         public Worker(
             ILogger<Worker> logger,
@@ -45,11 +46,13 @@ namespace HROneSyncService
                 ?? throw new Exception("Missing HROne:DomainCode");
 
             _pollSeconds = _config.GetValue<int>("Sync:PollIntervalSeconds", 5);
+            _deviceSyncControl = new DeviceSyncControl(_connectionString);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Worker started");
+            _deviceSyncControl.Start(8010);
             DashboardServer.Start(_connectionString, 8009, () => _applicationLifetime.StopApplication());
 
             while (!stoppingToken.IsCancellationRequested)
@@ -66,6 +69,14 @@ namespace HROneSyncService
                         _logger.LogInformation("Processing {Count} logs starting from {LastId}", logs.Count, lastId);
                         foreach (var log in logs)
                         {
+                            bool syncEnabled = await _deviceSyncControl.IsSyncEnabled(log.DeviceId, stoppingToken);
+                            if (!syncEnabled)
+                            {
+                                _logger.LogInformation("Skipping log {Id} from device {DeviceId}: HROne sync disabled", log.DeviceLogId, log.DeviceId);
+                                await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
+                                continue;
+                            }
+
                             bool ok = await PushToHROne(log, stoppingToken);
                             if (ok) await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
                         }
