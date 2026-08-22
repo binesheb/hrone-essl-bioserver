@@ -1,0 +1,10 @@
+{
+  "status": "idle",
+  "stage": "Ready",
+  "progress": 0,
+  "message": "No update is running.",
+  "startedAt": null,
+  "completedAt": null,
+  "commit": null,
+  "error": null
+}
