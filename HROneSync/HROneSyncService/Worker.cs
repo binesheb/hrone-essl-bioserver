@@ -21,6 +21,7 @@ namespace HROneSyncService
         private readonly string _domainCode;
         private readonly int _pollSeconds;
         private readonly DeviceSyncControl _deviceSyncControl;
+        private readonly PunchStatusStore _punchStatusStore;
 
         public Worker(
             ILogger<Worker> logger,
@@ -47,6 +48,7 @@ namespace HROneSyncService
 
             _pollSeconds = _config.GetValue<int>("Sync:PollIntervalSeconds", 5);
             _deviceSyncControl = new DeviceSyncControl(_connectionString);
+            _punchStatusStore = new PunchStatusStore(_connectionString);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,13 +74,24 @@ namespace HROneSyncService
                             bool syncEnabled = await _deviceSyncControl.IsSyncEnabled(log.DeviceId, stoppingToken);
                             if (!syncEnabled)
                             {
-                                _logger.LogInformation("Skipping log {Id} from device {DeviceId}: HROne sync disabled", log.DeviceLogId, log.DeviceId);
+                                await _punchStatusStore.SetStatus(log.DeviceLogId, "Ignored", stoppingToken);
+                                _logger.LogInformation("Ignoring log {Id} from device {DeviceId}: HROne sync disabled", log.DeviceLogId, log.DeviceId);
                                 await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
                                 continue;
                             }
 
+                            await _punchStatusStore.SetStatus(log.DeviceLogId, "Pending", stoppingToken);
                             bool ok = await PushToHROne(log, stoppingToken);
-                            if (ok) await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
+                            if (ok)
+                            {
+                                await _punchStatusStore.SetStatus(log.DeviceLogId, "Uploaded", stoppingToken);
+                                await UpdateLastProcessedId(log.DeviceLogId, stoppingToken);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Leaving log {Id} as Pending because HROne upload failed", log.DeviceLogId);
+                                break;
+                            }
                         }
                     }
                 }
