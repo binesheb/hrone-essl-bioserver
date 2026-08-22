@@ -1,0 +1,49 @@
+name: Patch Uploaded Ignored Display
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Show uploaded and ignored counts together'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch dashboard
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('HROneSync/HROneSyncService/Dashboard.cs')
+          s = p.read_text(encoding='utf-8')
+          old = '<div class="label">Uploaded Today</div><div id="uploaded" class="value">—</div><div class="small">Successfully sent to HROne</div>'
+          new = '<div class="label">Uploaded Today</div><div id="uploaded" class="value">—</div><div class="small">Successfully sent to HROne <span id="ignoredTodayInline">(+0)</span></div>'
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+          old = "$('uploaded').textContent=s.uploadedToday.toLocaleString();$('pending').textContent=s.pending.toLocaleString();"
+          new = "$('uploaded').textContent=s.uploadedToday.toLocaleString();$('ignoredTodayInline').textContent='(+'+(s.ignoredToday||0).toLocaleString()+')';$('pending').textContent=s.pending.toLocaleString();"
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+          old = "<div class=\"small\">Successfully sent to HROne <span id=\"ignoredTodayInline\">(+0)</span></div>"
+          new = "<div class=\"small\">Successfully sent to HROne <span id=\"ignoredTodayInline\">(+0)</span> ignored</div>"
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+          p.write_text(s, encoding='utf-8')
+      - name: Build
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build HROneSync/HROneSyncService/HROneSyncService.csproj -c Release
+      - name: Commit
+        run: |
+          rm -f .github/workflows/patch-uploaded-ignored-display.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add HROneSync/HROneSyncService/Dashboard.cs
+          git commit -m "Show uploaded and ignored counts together"
+          git push origin main
