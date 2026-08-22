@@ -3,7 +3,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 REM Dashboard-triggered updater with visible progress state.
 set "SCRIPT_DIR=%~dp0"
-set "STATUS=%SCRIPT_DIR%update-status.json"
+set "STATUS=%ProgramData%\HROneSyncService\update-status.json"
+if not exist "%ProgramData%\HROneSyncService\" mkdir "%ProgramData%\HROneSyncService"
 
 >"%STATUS%" echo {"status":"running","stage":"Starting","progress":5,"message":"Update requested.","startedAt":"%date% %time%","completedAt":null,"commit":null,"error":null}
 call "%SCRIPT_DIR%rebuild-republish-restart.bat" > "%SCRIPT_DIR%update-output.log" 2>&1

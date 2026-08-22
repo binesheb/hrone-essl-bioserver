@@ -27,6 +27,8 @@ if not exist "%PUBLISH_DIR%\" (echo [ERROR] Existing Publish folder not found: %
 
 cd /d "%INSTANCE_ROOT%"
 
+call :UpdateStatus "Preparing update" 8 "Preparing deployment."
+
 echo.
 echo ================================================================
 echo LOCATION-AWARE HROne ESSL DEPLOYMENT
@@ -42,6 +44,7 @@ echo.
 REM 1. Stop service BEFORE touching Git or published files.
 sc.exe query "%SERVICE%" >nul 2>&1
 if not errorlevel 1 (
+    call :UpdateStatus "Stopping service" 12 "Stopping Windows service safely."
     echo [1/9] Stopping %SERVICE% before update...
     sc.exe stop "%SERVICE%" >nul 2>&1
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $s=(Get-Service -Name '%SERVICE%' -ErrorAction SilentlyContinue).Status; if($s -eq 'Stopped'){exit 0}; Start-Sleep -Milliseconds 500 } while((Get-Date) -lt $deadline); exit 1"
@@ -59,6 +62,7 @@ echo       Published executable is released for update.
 REM 2. If this is a Git clone, force it to exactly match origin/main.
 if exist "%INSTANCE_ROOT%\.git\" (
     echo.
+    call :UpdateStatus "Fetching GitHub" 25 "Fetching and synchronizing origin/main."
     echo [2/9] Git repository detected. Forcing origin/main...
     git --version >nul 2>&1
     if errorlevel 1 (echo [ERROR] Git was not found in PATH. Service remains stopped.& exit /b 15)
@@ -87,6 +91,7 @@ if exist "%INSTANCE_ROOT%\.git\" (
 
 REM 3. Clean source build artifacts.
 echo.
+call :UpdateStatus "Cleaning" 38 "Cleaning source build artifacts."
 echo [3/9] Cleaning source build artifacts...
 if exist "%PROJECT_DIR%\bin" (rmdir /s /q "%PROJECT_DIR%\bin" & if exist "%PROJECT_DIR%\bin" (echo [ERROR] Could not remove bin folder. Service remains stopped.& exit /b 6))
 if exist "%PROJECT_DIR%\obj" (rmdir /s /q "%PROJECT_DIR%\obj" & if exist "%PROJECT_DIR%\obj" (echo [ERROR] Could not remove obj folder. Service remains stopped.& exit /b 6))
@@ -94,18 +99,21 @@ echo       Source bin/obj cleaned.
 
 REM 4. Restore.
 echo.
+call :UpdateStatus "Restoring dependencies" 50 "Restoring NuGet dependencies."
 echo [4/9] Restoring dependencies...
 dotnet restore "%PROJECT%"
 if errorlevel 1 (echo [ERROR] Restore failed. Service remains stopped.& exit /b 7)
 
 REM 5. Build.
 echo.
+call :UpdateStatus "Building" 62 "Building Release configuration."
 echo [5/9] Building Release...
 dotnet build "%PROJECT%" -c Release --no-restore
 if errorlevel 1 (echo [ERROR] Build failed. Service remains stopped.& exit /b 8)
 
 REM 6. Publish.
 echo.
+call :UpdateStatus "Publishing" 74 "Publishing the service."
 echo [6/9] Publishing to:
 echo       %PUBLISH_DIR%
 dotnet publish "%PROJECT%" -c Release --no-restore -o "%PUBLISH_DIR%"
@@ -114,6 +122,7 @@ if not exist "%PUBLISH_EXE%" (echo [ERROR] Published executable not found: %PUBL
 
 REM 7. Configure Windows Service to THIS instance.
 echo.
+call :UpdateStatus "Configuring service" 84 "Configuring Windows Service."
 echo [7/9] Switching Windows service to THIS INSTANCE...
 echo       Target: %PUBLISH_EXE%
 sc.exe query "%SERVICE%" >nul 2>&1
@@ -129,6 +138,7 @@ sc.exe failure "%SERVICE%" reset= 86400 actions= restart/60000/restart/60000/res
 
 REM 8. Verify actual SCM ImagePath.
 echo.
+call :UpdateStatus "Verifying service" 91 "Verifying the installed service path."
 echo [8/9] Verifying Windows service path...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$expected=(Resolve-Path -LiteralPath '%PUBLISH_EXE%').Path; $svc=Get-CimInstance Win32_Service -Filter \"Name='%SERVICE%'\"; if($null -eq $svc){Write-Error 'Service not found after configuration.';exit 1}; $actual=$svc.PathName; Write-Host ('       SCM Path: '+$actual); $normalized=$actual.Trim(); if($normalized.StartsWith('''') -and $normalized.EndsWith('''')){$normalized=$normalized.Substring(1,$normalized.Length-2)}; if($normalized -ne $expected){Write-Error ('Service is mapped to the wrong instance. Expected: '+$expected+' ; Actual: '+$actual);exit 2};exit 0"
 if errorlevel 1 (echo [ERROR] Windows service path verification failed. Service will NOT be started.& exit /b 12)
@@ -136,6 +146,7 @@ echo       Service path verified for THIS INSTANCE.
 
 REM 9. Start service and verify dashboard.
 echo.
+call :UpdateStatus "Starting service" 96 "Starting service and checking Dashboard."
 echo [9/9] Starting %SERVICE%...
 sc.exe start "%SERVICE%" >nul
 if errorlevel 1 (echo [ERROR] Failed to start %SERVICE%.& exit /b 13)
@@ -148,6 +159,7 @@ if errorlevel 1 (echo [WARN] Port 8009 is not listening yet.) else (echo       D
 
 echo.
 echo ================================================================
+call :UpdateStatus "Completed" 100 "Update completed successfully."
 echo DEPLOYMENT COMPLETE
 echo ================================================================
 echo Instance : %INSTANCE_ROOT%
@@ -155,4 +167,13 @@ echo Publish  : %PUBLISH_DIR%
 echo Service  : %SERVICE%
 echo Dashboard: http://localhost:8009
 echo ================================================================
+exit /b 0
+
+:UpdateStatus
+set "US_STAGE=%~1"
+set "US_PROGRESS=%~2"
+set "US_MESSAGE=%~3"
+set "US_STATUS=%ProgramData%\HROneSyncService\update-status.json"
+if not exist "%ProgramData%\HROneSyncService\" mkdir "%ProgramData%\HROneSyncService" >nul 2>&1
+>"%US_STATUS%" echo {"status":"running","stage":"%US_STAGE%","progress":%US_PROGRESS%,"message":"%US_MESSAGE%","startedAt":"%date% %time%","completedAt":null,"commit":null,"error":null}
 exit /b 0
