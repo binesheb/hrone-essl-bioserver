@@ -6,8 +6,10 @@ The project follows [Semantic Versioning](https://semver.org/). Until a stable `
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-23
+
 ### Added
-- Canonical release history for the HROne eSSL BioServer bridge.
+- GitHub Actions CI that restores and validates a Release build of the Windows service on pushes and pull requests targeting `main`.
 
 ## [0.1.1] - 2026-08-20
 
