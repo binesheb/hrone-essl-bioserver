@@ -6,6 +6,9 @@ The project follows [Semantic Versioning](https://semver.org/). Until a stable `
 
 ## [Unreleased]
 
+### Changed
+- Removed obsolete one-time and self-patching GitHub Actions workflows after their fixes were incorporated into the maintained source and CI pipeline.
+
 ## [0.1.2] - 2026-08-23
 
 ### Added
