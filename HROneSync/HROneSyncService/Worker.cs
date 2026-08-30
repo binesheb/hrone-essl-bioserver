@@ -149,7 +149,7 @@ namespace HROneSyncService
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync(token);
             using var cmd = new SqlCommand(@"
-                SELECT TOP (500) DeviceLogId, DeviceId, EmployeeCode, LogDate, Direction
+                SELECT DeviceLogId, DeviceId, EmployeeCode, LogDate, Direction
                 FROM eBioServerNew.dbo.DeviceLogs
                 WHERE DeviceLogId > @id
                 ORDER BY DeviceLogId ASC", conn);
