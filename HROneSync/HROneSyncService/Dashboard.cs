@@ -107,6 +107,8 @@ EmployeeSummary AS (
         MIN(LogDate) AS FirstPunch,
         MAX(LogDate) AS LastPunch,
         COUNT_BIG(*) AS PunchCount,
+        SUM(CASE WHEN RawDirection IN ('IN','ENTRY','I') THEN 1 ELSE 0 END) AS InPunchCount,
+        SUM(CASE WHEN RawDirection IN ('OUT','EXIT','O') THEN 1 ELSE 0 END) AS OutPunchCount,
         MAX(CASE WHEN LatestSequence = 1 THEN RawDirection END) AS LatestDirection
     FROM TodayPunches
     GROUP BY EmployeeCode
@@ -117,6 +119,8 @@ SELECT
     FirstPunch,
     LastPunch,
     PunchCount,
+    InPunchCount,
+    OutPunchCount,
     LatestDirection,
     CASE
         WHEN LatestDirection IN ('OUT', 'EXIT', 'O') THEN 'Completed'
@@ -137,7 +141,7 @@ ORDER BY LastPunch DESC, EmployeeCode ASC;";
             while (await reader.ReadAsync())
             {
                 present++;
-                var state = reader.GetString(6);
+                var state = reader.GetString(8);
                 if (state == "Pending") pending++;
                 else if (state == "Completed") completed++;
                 else unknown++;
@@ -149,8 +153,15 @@ ORDER BY LastPunch DESC, EmployeeCode ASC;";
                     firstPunch = reader.GetDateTime(2).ToString("yyyy-MM-dd HH:mm:ss"),
                     lastPunch = reader.GetDateTime(3).ToString("yyyy-MM-dd HH:mm:ss"),
                     punchCount = reader.GetInt64(4),
-                    latestDirection = reader.IsDBNull(5) ? null : reader.GetString(5),
-                    calculatedState = state
+                    inPunchCount = reader.GetInt64(5),
+                    outPunchCount = reader.GetInt64(6),
+                    latestDirection = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    calculatedState = state,
+                    diagnosticReason = state == "Pending"
+                        ? "Latest recorded direction is IN"
+                        : state == "Completed"
+                            ? "Latest recorded direction is OUT"
+                            : "Latest direction is not recognized"
                 });
             }
 
