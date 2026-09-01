@@ -48,6 +48,7 @@ public static class DashboardServer
             if (path is "") { await WriteHtml(context, BuildDashboardHtml(), 200); return; }
             if (path == "/api/data" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetDashboardData(), 200); return; }
             if (path == "/api/punch-state" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetPunchState(), 200); return; }
+            if (path == "/api/pending-punch-out-diagnostics" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetPendingPunchOutDiagnostics(), 200); return; }
             if (path == "/api/health" && context.Request.HttpMethod == "GET") { await WriteJson(context, await GetHealth(), 200); return; }
             if (path == "/api/checkpoint" && context.Request.HttpMethod == "POST") { await SetCheckpoint(context); return; }
             if (path == "/api/resync" && context.Request.HttpMethod == "POST") { await Resync(context); return; }
@@ -70,6 +71,108 @@ public static class DashboardServer
     {
         try { await using var c = await OpenConnection(); var latest = await ScalarLong(c, "SELECT ISNULL(MAX(DeviceLogId),0) FROM eBioServerNew.dbo.DeviceLogs"); return new { ok = true, latestLogId = latest, checkedAt = DateTime.Now }; }
         catch (Exception ex) { return new { ok = false, latestLogId = 0L, error = ex.Message, type = ex.GetType().Name, checkedAt = DateTime.Now }; }
+    }
+
+    // Diagnostic endpoint: reconciles every employee who punched today so nobody is silently dropped.
+    private static async Task<object> GetPendingPunchOutDiagnostics()
+    {
+        try
+        {
+            await using var c = await OpenConnection();
+            var start = DateTime.Today;
+            var end = start.AddDays(1);
+
+            const string sql = @"WITH TodayPunches AS (
+    SELECT
+        LTRIM(RTRIM(d.EmployeeCode)) AS EmployeeCode,
+        e.EmployeeName,
+        d.LogDate,
+        d.DeviceLogId,
+        NULLIF(UPPER(LTRIM(RTRIM(d.Direction))), '') AS RawDirection,
+        ROW_NUMBER() OVER (
+            PARTITION BY LTRIM(RTRIM(d.EmployeeCode))
+            ORDER BY d.LogDate DESC, d.DeviceLogId DESC
+        ) AS LatestSequence
+    FROM eBioServerNew.dbo.DeviceLogs d
+    LEFT JOIN eBioServerNew.dbo.Employees e
+        ON e.EmployeeCode = d.EmployeeCode
+    WHERE d.LogDate >= @Start
+      AND d.LogDate < @End
+      AND NULLIF(LTRIM(RTRIM(d.EmployeeCode)), '') IS NOT NULL
+),
+EmployeeSummary AS (
+    SELECT
+        EmployeeCode,
+        MAX(EmployeeName) AS EmployeeName,
+        MIN(LogDate) AS FirstPunch,
+        MAX(LogDate) AS LastPunch,
+        COUNT_BIG(*) AS PunchCount,
+        MAX(CASE WHEN LatestSequence = 1 THEN RawDirection END) AS LatestDirection
+    FROM TodayPunches
+    GROUP BY EmployeeCode
+)
+SELECT
+    EmployeeCode,
+    EmployeeName,
+    FirstPunch,
+    LastPunch,
+    PunchCount,
+    LatestDirection,
+    CASE
+        WHEN LatestDirection IN ('OUT', 'EXIT', 'O') THEN 'Completed'
+        WHEN LatestDirection IN ('IN', 'ENTRY', 'I') THEN 'Pending'
+        WHEN LatestDirection IS NULL THEN 'Unknown'
+        ELSE 'Unknown'
+    END AS CalculatedState
+FROM EmployeeSummary
+ORDER BY LastPunch DESC, EmployeeCode ASC;";
+
+            var rows = new List<object>();
+            await using var cmd = new SqlCommand(sql, c) { CommandTimeout = 20 };
+            cmd.Parameters.AddWithValue("@Start", start);
+            cmd.Parameters.AddWithValue("@End", end);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            long present = 0, pending = 0, completed = 0, unknown = 0;
+            while (await reader.ReadAsync())
+            {
+                present++;
+                var state = reader.GetString(6);
+                if (state == "Pending") pending++;
+                else if (state == "Completed") completed++;
+                else unknown++;
+
+                rows.Add(new
+                {
+                    employeeCode = reader.GetString(0),
+                    employeeName = reader.IsDBNull(1) ? "-" : reader.GetString(1),
+                    firstPunch = reader.GetDateTime(2).ToString("yyyy-MM-dd HH:mm:ss"),
+                    lastPunch = reader.GetDateTime(3).ToString("yyyy-MM-dd HH:mm:ss"),
+                    punchCount = reader.GetInt64(4),
+                    latestDirection = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    calculatedState = state
+                });
+            }
+
+            return new
+            {
+                ok = true,
+                date = start.ToString("yyyy-MM-dd"),
+                summary = new
+                {
+                    presentToday = present,
+                    pendingPunchOut = pending,
+                    completedPunchOut = completed,
+                    unknownState = unknown,
+                    reconciledTotal = pending + completed + unknown
+                },
+                employees = rows
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, error = ex.Message, type = ex.GetType().Name };
+        }
     }
 
     private static async Task SetCheckpoint(HttpListenerContext context)
