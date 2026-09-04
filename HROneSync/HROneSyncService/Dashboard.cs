@@ -107,8 +107,8 @@ EmployeeSummary AS (
         MIN(LogDate) AS FirstPunch,
         MAX(LogDate) AS LastPunch,
         COUNT_BIG(*) AS PunchCount,
-        SUM(CASE WHEN RawDirection IN ('IN','ENTRY','I') THEN 1 ELSE 0 END) AS InPunchCount,
-        SUM(CASE WHEN RawDirection IN ('OUT','EXIT','O') THEN 1 ELSE 0 END) AS OutPunchCount,
+        CONVERT(bigint, SUM(CASE WHEN RawDirection IN ('IN','ENTRY','I') THEN 1 ELSE 0 END)) AS InPunchCount,
+        CONVERT(bigint, SUM(CASE WHEN RawDirection IN ('OUT','EXIT','O') THEN 1 ELSE 0 END)) AS OutPunchCount,
         MAX(CASE WHEN LatestSequence = 1 THEN RawDirection END) AS LatestDirection
     FROM TodayPunches
     GROUP BY EmployeeCode
