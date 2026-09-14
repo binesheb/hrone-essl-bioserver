@@ -26,3 +26,11 @@ jobs:
         run: dotnet restore HROneSync/HROneSyncService/HROneSyncService.csproj
       - name: Build
         run: dotnet build HROneSync/HROneSyncService/HROneSyncService.csproj --configuration Release --no-restore
+      - name: Publish
+        run: dotnet publish HROneSync/HROneSyncService/HROneSyncService.csproj --configuration Release --no-restore --output ./publish
+      - name: Verify publish output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ./publish/HROneSyncService.exe)) {
+            throw "Expected HROneSyncService.exe was not produced by dotnet publish."
+          }
