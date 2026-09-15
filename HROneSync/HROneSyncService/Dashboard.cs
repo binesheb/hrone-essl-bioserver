@@ -24,7 +24,7 @@ public static class DashboardServer
             _connectionString = connectionString;
             _stopApplication = stopApplication;
             _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://+:{port}/");
+            _listener.Prefixes.Add($"http://localhost:{port}/");
             _listener.Start();
             _ = Task.Run(ListenLoop);
         }
@@ -383,7 +383,7 @@ async function updateStatus(){try{const u=await getJson('/api/update-status');co
 async function service(action){if(action!=='update'&&!confirm((action==='stop'?'Stop':'Restart')+' the service?'))return;$('serviceMsg').textContent='Requesting '+action+'...';try{const j=await getJson('/api/service/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});$('serviceMsg').textContent=j.message||'Done';if(action==='update'){updateStatus();setTimeout(updateStatus,1000);}}catch(e){$('serviceMsg').textContent=e.message}}
 $('stop').onclick=()=>service('stop');$('restart').onclick=()=>service('restart');$('update').onclick=()=>service('update');
 async function health(){try{const h=await getJson('/api/health');$('health').innerHTML='<span class="dot '+(h.ok?'ok':'bad')+'"></span><span>'+h.database+' • '+h.service+'</span>';$('serviceState').innerHTML='<span class="dot '+(h.service==='Running'?'ok':'bad')+'"></span>'+h.service}catch{$('health').innerHTML='<span class="dot bad"></span><span>Unavailable</span>';$('serviceState').innerHTML='<span class="dot bad"></span>Unavailable'}}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]||c))}
 $('syncDate').value=new Date().toISOString().slice(0,10);refresh('Initial load');health();updateStatus();setInterval(poll,10000);setInterval(()=>refresh('Safe interval'),60000);setInterval(health,30000);setInterval(updateStatus,2000);
 </script></body></html>
 """;
