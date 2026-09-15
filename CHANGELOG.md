@@ -9,6 +9,9 @@ The project follows [Semantic Versioning](https://semver.org/). Until a stable `
 ### Changed
 - Removed obsolete one-time and self-patching GitHub Actions workflows after their fixes were incorporated into the maintained source and CI pipeline.
 
+### Security
+- Bound the local dashboard and device-sync control listeners to `localhost` instead of all network interfaces, matching the documented local-only deployment model and reducing exposure of service-control endpoints.
+
 ## [0.1.2] - 2026-08-23
 
 ### Added
