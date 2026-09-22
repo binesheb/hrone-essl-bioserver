@@ -2,15 +2,25 @@
 
 All notable changes to this project are documented here.
 
-The project follows [Semantic Versioning](https://semver.org/). Until a stable `1.0.0` release, potentially breaking changes may occur in minor releases.
+The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+### Security
+- Automatic updates now verify that `origin` points to the trusted `binesheb/hrone-essl-bioserver` GitHub repository before fetching or applying changes.
 
 ### Changed
 - Removed obsolete one-time and self-patching GitHub Actions workflows after their fixes were incorporated into the maintained source and CI pipeline.
 
+## [1.0.0] - 2026-08-30
+
+### Added
+- Stable HROne/eSSL biometric synchronization service baseline.
+- Windows Service hosting, local state tracking, dashboard support, and controlled update procedures.
+
 ### Security
-- Bound the local dashboard and device-sync control listeners to `localhost` instead of all network interfaces, matching the documented local-only deployment model and reducing exposure of service-control endpoints.
+- Bound the local dashboard and device-sync control listeners to `localhost` instead of all network interfaces.
+- Production credentials remain deployment-local and are not restored from repository defaults during updates.
 
 ## [0.1.2] - 2026-08-23
 
@@ -23,11 +33,7 @@ The project follows [Semantic Versioning](https://semver.org/). Until a stable `
 - Dependency bootstrap and Release-build validation guidance.
 - Controlled manual and managed automatic deployment guidance.
 
-### Security
-- Production credentials remain deployment-local and are not restored from repository defaults during updates.
-
 ## [0.1.0]
 
 ### Added
 - Initial HROne/eSSL biometric synchronization service foundation.
-- Windows Service hosting, local state tracking, and dashboard support.
