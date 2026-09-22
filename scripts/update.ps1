@@ -11,6 +11,11 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "Git is required for updates."
 }
 
+$originUrl = (git remote get-url origin).Trim()
+if ($originUrl -notmatch '^(https://github\.com/binesheb/hrone-essl-bioserver\.git|git@github\.com:binesheb/hrone-essl-bioserver\.git)$') {
+    throw "Refusing automatic update because origin does not point to the trusted binesheb/hrone-essl-bioserver repository. Current origin: $originUrl"
+}
+
 $branch = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($branch -ne "main") {
     throw "Automatic updates are allowed only while on the main branch. Current branch: $branch"
